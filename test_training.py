@@ -29,18 +29,33 @@ class TrainingTests(unittest.TestCase):
             self.assertEqual(state, (game.wave, game.shields, game.remaining, game.energy))
             game.start()
             self.assertEqual(game.wave, wave)
-            self.assertEqual(game.phase, "warning")
+            self.assertEqual(game.phase, "aim" if lesson == "shoot" else "warning")
         self.assertEqual(game.boss, 1)
 
-    def test_first_asteroid_lesson_has_only_three_staggered_impacts(self):
+    def test_first_asteroid_lesson_has_only_three_warned_rocks(self):
         game = Game(2)
         game.wave = 3
         game.next_wave()
         game.start()
         self.assertEqual(game.kind, "asteroid")
-        self.assertEqual(len(game.asteroid_timers), 3)
+        self.assertEqual(len(game.asteroid_timers) + len(game.asteroid_pending), 3)
         self.assertGreaterEqual(min(game.asteroid_timers.values()), 2.8)
         self.assertFalse(game.enemies)
+
+    def test_shooting_practice_waits_for_a_kill_without_incoming_hazards(self):
+        game = Game(2)
+        game.wave = 6
+        game.next_wave()
+        game.start()
+        self.assertEqual(game.enemies, {0: 3})
+        game.advance(100)
+        self.assertEqual((game.phase, game.shields, game.wave), ("aim", 3, 7))
+        self.assertFalse(game.hazards)
+        game.damage(0, 3)
+        game.advance(.1)
+        self.assertEqual(game.phase, "cooldown")
+        game.advance(game.remaining)
+        self.assertEqual((game.phase, game.wave, game.enemies), ("aim", 8, {2: 3}))
 
     def test_boss_and_enemies_do_not_appear_before_their_lessons(self):
         game = Game(3)
@@ -74,6 +89,9 @@ class TrainingTests(unittest.TestCase):
                 game.start()
             if game.boss:
                 break
+            if game.phase == "aim":
+                for enemy in list(game.enemies):
+                    game.damage(enemy, 3)
             safe = set(range(9)) - game.hazards
             if safe:
                 game.ship = min(safe)

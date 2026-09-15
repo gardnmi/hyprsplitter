@@ -8,6 +8,7 @@ resize, float and fullscreen the ship. It does not install replacement bindings.
 
 ```sh
 ./play
+./play --lesson shoot   # Revisit the shooting lesson directly
 ```
 
 A dedicated workspace opens, starting at the first unused number from 90.
@@ -18,8 +19,8 @@ card until you press Space. Earlier mechanics gradually return in later lessons.
 | Lesson | What you practice |
 | --- | --- |
 | 1 | Focus the ship and swap windows; one slow laser lane, no enemies |
-| 2 | Dodge three asteroids with independent countdowns |
-| 3 | Line up shots by moving; shooting is automatic |
+| 2 | React to random asteroid arrivals: a mix of solo rocks and small groups |
+| 3 | Learn to shoot up at one target, without incoming hazards or a time limit |
 | 4 | Toggle floating and drag the ship, then return to tiling |
 | 5 | Resize the ship for a temporary double-damage bonus |
 | 6 | Deploy a wing, change split orientation, and focus either ship |
@@ -55,7 +56,11 @@ update. Your configured Super+arrows focus shortcuts also work normally.
 
 The only game-specific keys are **Space / Enter** to start, continue or pause,
 **R** to restart, and **Escape / Q** to exit. Old WASD/IJKL and ability-letter
-controls are removed. Shots automatically target the first aligned enemy.
+controls are removed. Your ship **always shoots up**, automatically hitting the
+first enemy above it in the same firing lane. Move below the target and align
+horizontally. The ship shows an upward guide and tells you which way to move;
+the target turns cyan when locked, flashes on hits, and displays remaining HP.
+The shooting lesson waits for three target kills before adding hazards back in.
 
 **Deploying a wing is a game button**, unlocked in lesson 6, costing 30 energy.
 Click it again to merge. Super+J is correctly taught as split orientation;
@@ -77,7 +82,9 @@ game's tiling tree while keeping surviving ship windows alive.
 The Window Devourer has an enlarged armored tile (18 HP), breaks into three
 separate windows (6 HP each), then becomes a moving floating core (12 HP).
 Destroy the core for victory. Split ships share three shields; either may take
-a hit. Laser volleys fire together; asteroids resolve one sector at a time.
+a hit. Laser volleys fire together. Asteroids appear at random times, sometimes
+alone and sometimes in groups of two or three that impact together. Future
+arrivals stay hidden until their warning begins; every rock gets a full warning.
 
 ## Requirements and behavior
 
@@ -109,7 +116,7 @@ Live checks temporarily open their own board. Run them one at a time and leave
 that workspace focused. They exercise physical swaps, shooting, growth, wing
 movement/merging, flight/landing, fullscreen, boss transitions, persistent ship
 identity and restart cleanup. Rule tests cover lesson sequencing, instruction
-pauses, customized hint labels and staggered asteroid collisions.
+pauses, customized hint labels, aiming guidance and random asteroid clusters.
 
 Earlier versions are preserved as Git tags: `v0.1.0` is the initial dodge
 prototype; `v0.2.0` adds combat and window abilities.

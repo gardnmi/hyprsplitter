@@ -50,3 +50,22 @@ def firing_lane(geometry, source, enemies, direction):
         if index in enemies:
             return index, path
     return None, path
+
+
+def aim_guidance(geometry, source, enemies):
+    target, _ = firing_lane(geometry, source, enemies, "up")
+    if target is not None:
+        return target, "TARGET LOCKED / AUTO-FIRING UP"
+    if not enemies:
+        return None, "TARGETS CLEAR"
+    sx, sy = center(geometry[source])
+    candidates = [i for i in enemies if i in geometry]
+    if not candidates:
+        return None, "AUTO-FIRE UP / GET BELOW A TARGET"
+    nearest = min(candidates, key=lambda i: sum((a-b)**2 for a, b in zip(center(geometry[i]), (sx, sy))))
+    target_rect = geometry[nearest]
+    tx, ty = target_rect["at"]
+    tw, th = target_rect["size"]
+    if ty+th > sy:
+        return None, "MOVE BELOW THE RED TARGET"
+    return None, "MOVE RIGHT TO LINE UP" if sx < tx else "MOVE LEFT TO LINE UP"

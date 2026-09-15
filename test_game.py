@@ -55,8 +55,9 @@ class GameTests(unittest.TestCase):
         game = Game(4, training=False)
         for _ in range(100):
             game.next_wave()
-            self.assertEqual(len(game.hazards), 6)
-            self.assertIn(game.ship, game.hazards)
+            planned = game.hazards | set(game.asteroid_pending)
+            self.assertEqual(len(planned), 6)
+            self.assertIn(game.ship, planned)
             self.assertGreaterEqual(game.duration, .65)
             self.assertLessEqual(game.duration, .95)
             row, col = divmod(game.ship, 3)

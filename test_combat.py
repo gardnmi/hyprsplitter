@@ -1,6 +1,6 @@
 import unittest
 
-from combat import firing_lane, neighbor
+from combat import firing_lane, neighbor, aim_guidance
 from game import Game
 
 
@@ -19,6 +19,16 @@ class CombatTests(unittest.TestCase):
         self.assertEqual((target, path), (1, [4, 1]))
         self.assertEqual(firing_lane(geometry, 4, {0, 2}, "up"), (0, [4, 1, 0]))
         self.assertIsNone(firing_lane(geometry, 4, {0}, "down")[0])
+
+    def test_aim_guidance_explains_how_to_line_up(self):
+        geometry = {4: rect(110, 220), 0: rect(0, 0)}
+        self.assertEqual(aim_guidance(geometry, 4, {0}), (None, "MOVE LEFT TO LINE UP"))
+        geometry[0] = rect(220, 0)
+        self.assertEqual(aim_guidance(geometry, 4, {0}), (None, "MOVE RIGHT TO LINE UP"))
+        geometry[0] = rect(110, 330)
+        self.assertEqual(aim_guidance(geometry, 4, {0}), (None, "MOVE BELOW THE RED TARGET"))
+        geometry[0] = rect(110, 0)
+        self.assertEqual(aim_guidance(geometry, 4, {0}), (0, "TARGET LOCKED / AUTO-FIRING UP"))
 
     def test_physical_navigation_handles_unequal_tiles_and_blockers(self):
         geometry = {4: rect(110, 220), 1: rect(0, 110, 320), 0: rect(110, 0), 9: rect(110, 160, floating=True)}

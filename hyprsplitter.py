@@ -12,8 +12,8 @@ import time
 import traceback
 
 from game import Game
-from combat import center, neighbor, firing_lane
-from controls import shortcut_labels
+from combat import center, neighbor, firing_lane, aim_guidance
+from controls import LESSONS, shortcut_labels
 
 
 class Hyprland:
@@ -50,8 +50,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--smoke-test", action="store_true", help="Build the real board, verify swaps and cleanup, then exit")
     parser.add_argument("--combat-smoke-test", action="store_true", help="Verify native abilities and all boss window transitions, then exit")
-    parser.add_argument("--boss", action="store_true", help="Start with the Window Devourer on launch")
-    parser.add_argument("--arcade", action="store_true", help="Skip lessons and use the original fast difficulty")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--boss", action="store_true", help="Start with the Window Devourer on launch")
+    mode.add_argument("--arcade", action="store_true", help="Skip lessons and use the original fast difficulty")
+    mode.add_argument("--lesson", choices=[lesson[1] for lesson in LESSONS], help="Jump to a particular training lesson")
     args = parser.parse_args()
     hypr = Hyprland()
     # The prototype targets the Lua dispatcher API used by this installation.
@@ -76,8 +78,7 @@ def main():
         def __init__(self):
             self.game = Game(training=not (args.boss or args.arcade or args.smoke_test or args.combat_smoke_test))
             self.game.controls = shortcut_labels(hypr.request("binds", True))
-            if args.boss:
-                self.game.wave = 4
+            self.reset_game()
             self.windows = {}
             self.addresses = {}
             self.slots = {}
@@ -115,6 +116,17 @@ def main():
             self.smoke_stage = 0
             self.smoke_time = 0
             self.rule_installed = False
+
+        def reset_game(self):
+            self.game.restart()
+            if args.boss:
+                self.game.wave = 4
+            elif args.lesson:
+                lesson = next(item for item in LESSONS if item[1] == args.lesson)
+                self.game.wave = lesson[0]
+                self.game.lesson = lesson[1]
+                self.game.phase = "briefing"
+                self.game.enemies = {}
 
         def begin(self):
             hypr.request(f'eval {self.rule} = hl.window_rule({{name="{self.rule}", '
@@ -399,13 +411,12 @@ def main():
             self.game.fire(direction, targets, tiles)
 
         def auto_fire(self):
-            if not self.game.playing or self.game.shot_cooldown or self.rebuilding:
+            if self.rebuilding:
                 return
+            self.game.locked_target, self.game.aim_hint = aim_guidance(self.geometry, 4, self.game.enemies)
             sources = [4, 9] if self.game.split else [4]
-            for direction in ("up", "right", "down", "left"):
-                if any(firing_lane(self.geometry, source, self.game.enemies, direction)[0] is not None for source in sources):
-                    self.fire(direction)
-                    return
+            if any(firing_lane(self.geometry, source, self.game.enemies, "up")[0] is not None for source in sources):
+                self.fire("up")
 
         def validate_grid(self):
             widths = [c["size"][0] for c in self.geometry.values()]
@@ -455,9 +466,7 @@ def main():
                         elif self.game.phase not in ("over", "victory"):
                             self.game.paused = not self.game.paused
                     elif key == "r":
-                        self.game.restart()
-                        if args.boss:
-                            self.game.wave = 4
+                        self.reset_game()
                         self.controlled = 4
                         self.release_fire()
                         self.external_layout = False

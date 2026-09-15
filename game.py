@@ -21,6 +21,7 @@ class Game:
         self.duration = 1.0
         self.hazards = set()
         self.asteroid_timers = {}
+        self.asteroid_pending = {}
         self.asteroid_delays = {}
         self.asteroid_flashes = {}
         self.asteroid_hits = set()
@@ -43,6 +44,9 @@ class Game:
         self.shot_flash = 0.0
         self.shot_direction = "up"
         self.shot_tiles = set()
+        self.aim_hint = "AUTO-FIRE UP / GET BELOW A TARGET"
+        self.locked_target = None
+        self.enemy_flashes = {}
         self.message = "USE YOUR NORMAL OMARCHY WINDOW SHORTCUTS"
 
     def start(self):
@@ -61,6 +65,7 @@ class Game:
                 self.phase = "briefing"
                 self.hazards.clear()
                 self.asteroid_timers.clear()
+                self.asteroid_pending.clear()
                 self.asteroid_flashes.clear()
                 self.message = "SPACE WHEN YOU ARE READY"
                 return
@@ -82,19 +87,38 @@ class Game:
         if self.training:
             self.kind = "asteroid" if (4 <= self.wave <= 6 or self.wave >= 10 and self.wave % 3 == 0) else "laser"
         self.asteroid_timers.clear()
+        self.asteroid_pending.clear()
         self.asteroid_delays.clear()
         self.asteroid_flashes.clear()
         self.asteroid_hits.clear()
+        if self.training and 7 <= self.wave <= 9:
+            self.enemies = {0 if self.wave % 2 else 2: 3}
+            self.phase = "aim"
+            self.hazards.clear()
+            return
         if self.kind == "asteroid":
             others = [i for i in range(9) if i != self.ship]
             count = 2 if self.training and self.wave < 22 else 5
-            self.hazards = {self.ship, *self.rng.sample(others, count)}
-            order = self.rng.sample(sorted(self.hazards), len(self.hazards))
-            deadline = self.duration
-            for slot in order:
-                self.asteroid_timers[slot] = deadline
-                deadline += self.rng.uniform(.35, .65) if self.training else self.rng.uniform(.18, .34)
-            self.asteroid_delays = self.asteroid_timers.copy()
+            targets = {self.ship, *self.rng.sample(others, count)}
+            order = self.rng.sample(sorted(targets), len(targets))
+            # Mix singles and clusters, with independently sampled arrival times.
+            # Members of a cluster share their appearance and impact times.
+            groups = [order[:2], order[2:3]]
+            rest = order[3:]
+            while rest:
+                size = self.rng.randint(1, min(3, len(rest)))
+                groups.append(rest[:size])
+                rest = rest[size:]
+            horizon = 2.4 if self.training else 1.2
+            arrivals = [self.rng.uniform(0, horizon) for _ in groups]
+            first = min(arrivals)
+            self.hazards.clear()
+            for group, arrival in zip(groups, arrivals):
+                delay = arrival-first
+                warning = self.rng.uniform(self.duration, self.duration*1.4)
+                for slot in group:
+                    self.asteroid_pending[slot] = (delay, warning)
+            self.advance_asteroids(0)
         else:
             self.axis = self.rng.choice(("row", "column"))
             ship_lane = self.ship // 3 if self.axis == "row" else self.ship % 3
@@ -118,10 +142,16 @@ class Game:
         self.energy = min(100, self.energy + dt * 9)
         self.shot_cooldown = max(0, self.shot_cooldown - dt)
         self.shot_flash = max(0, self.shot_flash - dt)
+        self.enemy_flashes = {i: timer-dt for i, timer in self.enemy_flashes.items() if timer > dt}
         self.growth = max(0, self.growth - dt)
         self.flight = max(0, self.flight - dt)
         self.burst = max(0, self.burst - dt)
         if self.burst:
+            return
+        if self.phase == "aim":
+            if not self.enemies:
+                self.phase = "cooldown"
+                self.remaining = 1.2
             return
         self.asteroid_flashes = {slot: remaining-dt for slot, remaining in self.asteroid_flashes.items() if remaining > dt}
         if self.kind == "asteroid" and self.phase == "warning":
@@ -146,6 +176,14 @@ class Game:
             self.next_wave()
 
     def advance_asteroids(self, dt):
+        for slot, (delay, warning) in list(self.asteroid_pending.items()):
+            if delay > dt + 1e-9:
+                self.asteroid_pending[slot] = (delay-dt, warning)
+            else:
+                del self.asteroid_pending[slot]
+                self.asteroid_timers[slot] = warning + delay
+                self.asteroid_delays[slot] = warning
+                self.hazards.add(slot)
         for slot in list(self.asteroid_timers):
             self.asteroid_timers[slot] -= dt
             if self.asteroid_timers[slot] > 1e-9:
@@ -163,9 +201,10 @@ class Game:
                 self.phase = "over"
                 self.hazards.clear()
                 self.asteroid_timers.clear()
+                self.asteroid_pending.clear()
                 return
-        if self.asteroid_timers:
-            self.remaining = min(self.asteroid_timers.values())
+        if self.asteroid_timers or self.asteroid_pending:
+            self.remaining = min(list(self.asteroid_timers.values()) + [delay for delay, _ in self.asteroid_pending.values()])
         else:
             self.phase = "impact"
             self.remaining = .25
@@ -230,9 +269,11 @@ class Game:
         if enemy not in self.enemies:
             return
         self.enemies[enemy] -= amount
+        self.enemy_flashes[enemy] = .2
         if self.enemies[enemy] > 0:
             return
         del self.enemies[enemy]
+        self.enemy_flashes[enemy] = .7
         self.score += 250
         self.energy = min(100, self.energy + 20)
         if self.boss == 1:
@@ -248,6 +289,7 @@ class Game:
             self.phase = "victory"
             self.hazards.clear()
             self.asteroid_timers.clear()
+            self.asteroid_pending.clear()
             self.asteroid_flashes.clear()
             self.score += 2000
             self.message = "WINDOW DEVOURER DEFEATED"

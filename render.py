@@ -132,6 +132,11 @@ def draw_tile(cr, w, h, game, slot, player, ready, away, t, actor=None, controll
     line(cr, [(20, 43), (w-20, 43)], MUTED, 1, .25)
 
     if player:
+        if game.enemies:
+            cr.set_dash([5, 6])
+            line(cr, [(w/2, h/2-66), (w/2, 47)], CYAN, 2, .55)
+            cr.set_dash([])
+            line(cr, [(w/2-6, 56), (w/2, 47), (w/2+6, 56)], CYAN, 2)
         if (game.hit and game.phase == "impact") or (asteroid_impact and slot in game.asteroid_hits):
             color(cr, RED, .2)
             cr.paint()
@@ -143,6 +148,8 @@ def draw_tile(cr, w, h, game, slot, player, ready, away, t, actor=None, controll
         name = "WING" if wing else "PILOT 01"
         if actor == controlled:
             name += " / ACTIVE"
+        if game.phase == "aim":
+            name = "AUTO-FIRE UP / NO FIRE KEY"
         if game.growth and actor == 4:
             name = "GUNSHIP / DOUBLE DAMAGE"
         if game.flight and actor == 4:
@@ -156,18 +163,33 @@ def draw_tile(cr, w, h, game, slot, player, ready, away, t, actor=None, controll
             cr.fill()
     elif actor in game.enemies:
         boss = game.boss > 0
+        locked = actor == game.locked_target
+        if locked:
+            color(cr, CYAN, .1)
+            cr.paint()
+            color(cr, CYAN, .8)
+            cr.set_line_width(2)
+            cr.rectangle(8, 8, w-16, h-16)
+            cr.stroke()
+        if actor in game.enemy_flashes:
+            color(cr, WHITE, .18)
+            cr.paint()
         cr.save()
         cr.translate(w/2, h/2-12)
         cr.scale(2.6 if boss else 1.8, 2.6 if boss else 1.8)
-        enemy(cr, 0, 0, RED)
+        enemy(cr, 0, 0, CYAN if locked else RED)
         if boss:
             color(cr, RED, .3)
             cr.arc(0, 0, 31, -t*.4, -t*.4+math.pi*1.6)
             cr.stroke()
         cr.restore()
         title = {1: "THE WINDOW DEVOURER", 2: "ARMOR FRAGMENT", 3: "DETACHED CORE"}.get(game.boss, "INTERCEPTOR")
+        if game.phase == "aim":
+            title = "TARGET LOCKED" if locked else "TRAINING TARGET"
         text(cr, title, w/2, h/2+50, 14, RED, True)
-        text(cr, f"HULL {game.enemies[actor]:02d} / ALIGN TO AUTO-FIRE", w/2, h/2+69, 11, WHITE, True)
+        text(cr, f"HULL {game.enemies[actor]:02d} / GET BELOW THIS WINDOW", w/2, h/2+69, 11, WHITE, True)
+    elif actor in game.enemy_flashes:
+        text(cr, "TARGET DESTROYED", w/2, h/2, 18, CYAN, True)
     elif not danger:
         text(cr, "CLEAR", w/2, h/2+5, 17, MUTED, True)
 
@@ -210,6 +232,8 @@ def draw_tile(cr, w, h, game, slot, player, ready, away, t, actor=None, controll
         cr.rectangle(20, h-61, (w-40)*max(0, progress), 3)
         cr.fill()
     tip = lesson[4].format(**hints) if game.training else f"{hints['move']} SWAP / AUTO-FIRE"
+    if game.phase == "aim" and player:
+        tip = game.aim_hint
     if player or actor == 0:
         text(cr, tip, w/2, h-42, 10, CYAN, True)
         text(cr, f"{hints['focus']} focus / {hints['close']} quit", w/2, h-26, 10, MUTED, True)
