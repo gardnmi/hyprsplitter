@@ -24,7 +24,7 @@ def shortcut_labels(bindings):
 LESSONS = [
     (1, "move", "01 / MOVE THE WINDOW", "Focus your ship: {focus}", "Swap into the clear lane: {move}"),
     (4, "asteroids", "02 / RANDOM ASTEROIDS", "Rocks appear alone or in small groups.", "Watch each countdown; cleared sectors are safe."),
-    (7, "shoot", "03 / SHOOTING PRACTICE", "Your ship shoots UP automatically. No fire key.", "Get below the red target. No attacks in this lesson."),
+    (7, "shoot", "03 / CLEAR A SAFE ROUTE", "Touch an enemy: -1 shield. Shoot UP to destroy it.", "Get below it. A kill clears the route and repairs a shield."),
     (10, "float", "04 / FLOAT AND LAND", "Toggle floating: {float}", "Fly with {drag}; toggle again to land."),
     (13, "grow", "05 / RESIZE YOUR SHIP", "Resize: {resize} (Shift changes height)", "A larger ship deals double damage."),
     (16, "split", "06 / SPLIT ORIENTATION", "Click DEPLOY WING to add a second window.", "{split} rotates the split; {focus} selects a ship."),

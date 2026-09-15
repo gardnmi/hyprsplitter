@@ -59,8 +59,14 @@ The only game-specific keys are **Space / Enter** to start, continue or pause,
 controls are removed. Your ship **always shoots up**, automatically hitting the
 first enemy above it in the same firing lane. Move below the target and align
 horizontally. The ship shows an upward guide and tells you which way to move;
-the target turns cyan when locked, flashes on hits, and displays remaining HP.
+the target gains a cyan lock outline, flashes on hits, and displays remaining HP.
 The shooting lesson waits for three target kills before adding hazards back in.
+
+**Enemy tiles are unsafe to enter.** They keep a red border and a
+`HOSTILE / TOUCH = -1 SHIELD` warning even when target-locked. Swapping your ship
+into a live enemy costs one shield and bounces the ship back. Floating contact
+also hurts. Focusing a window is safe. Destroying an enemy clears its tile,
+awards 250 points and repairs one shield (up to three), with visible feedback.
 
 **Deploying a wing is a game button**, unlocked in lesson 6, costing 30 energy.
 Click it again to merge. Super+J is correctly taught as split orientation;

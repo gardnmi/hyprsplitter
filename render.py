@@ -137,7 +137,7 @@ def draw_tile(cr, w, h, game, slot, player, ready, away, t, actor=None, controll
             line(cr, [(w/2, h/2-66), (w/2, 47)], CYAN, 2, .55)
             cr.set_dash([])
             line(cr, [(w/2-6, 56), (w/2, 47), (w/2+6, 56)], CYAN, 2)
-        if (game.hit and game.phase == "impact") or (asteroid_impact and slot in game.asteroid_hits):
+        if game.contact_flash or (game.hit and game.phase == "impact") or (asteroid_impact and slot in game.asteroid_hits):
             color(cr, RED, .2)
             cr.paint()
         cr.save()
@@ -161,9 +161,21 @@ def draw_tile(cr, w, h, game, slot, player, ready, away, t, actor=None, controll
             color(cr, CYAN if i < game.shields else MUTED, 1 if i < game.shields else .25)
             cr.rectangle(w/2-39+i*28, h/2+72, 22, 5)
             cr.fill()
+        if game.contact_flash:
+            color(cr, (.25, .02, .04), .96)
+            cr.rectangle(w/2-145, h/2-38, 290, 52)
+            cr.fill()
+            text(cr, "COLLISION / -1 SHIELD", w/2, h/2-5, 19, WHITE, True)
     elif actor in game.enemies:
         boss = game.boss > 0
         locked = actor == game.locked_target
+        color(cr, RED, .07)
+        cr.paint()
+        color(cr, RED, .9)
+        cr.set_line_width(3)
+        cr.rectangle(4, 4, w-8, h-8)
+        cr.stroke()
+        text(cr, "HOSTILE / TOUCH = -1 SHIELD", w/2, 65, 12, RED, True)
         if locked:
             color(cr, CYAN, .1)
             cr.paint()
@@ -177,7 +189,7 @@ def draw_tile(cr, w, h, game, slot, player, ready, away, t, actor=None, controll
         cr.save()
         cr.translate(w/2, h/2-12)
         cr.scale(2.6 if boss else 1.8, 2.6 if boss else 1.8)
-        enemy(cr, 0, 0, CYAN if locked else RED)
+        enemy(cr, 0, 0, RED)
         if boss:
             color(cr, RED, .3)
             cr.arc(0, 0, 31, -t*.4, -t*.4+math.pi*1.6)
@@ -185,11 +197,12 @@ def draw_tile(cr, w, h, game, slot, player, ready, away, t, actor=None, controll
         cr.restore()
         title = {1: "THE WINDOW DEVOURER", 2: "ARMOR FRAGMENT", 3: "DETACHED CORE"}.get(game.boss, "INTERCEPTOR")
         if game.phase == "aim":
-            title = "TARGET LOCKED" if locked else "TRAINING TARGET"
+            title = "LOCKED / STILL HOSTILE" if locked else "HOSTILE TARGET"
         text(cr, title, w/2, h/2+50, 14, RED, True)
         text(cr, f"HULL {game.enemies[actor]:02d} / GET BELOW THIS WINDOW", w/2, h/2+69, 11, WHITE, True)
     elif actor in game.enemy_flashes:
-        text(cr, "TARGET DESTROYED", w/2, h/2, 18, CYAN, True)
+        text(cr, "ROUTE CLEAR", w/2, h/2-10, 20, CYAN, True)
+        text(cr, game.kill_rewards.get(actor, "+250 POINTS"), w/2, h/2+20, 12, CYAN, True)
     elif not danger:
         text(cr, "CLEAR", w/2, h/2+5, 17, MUTED, True)
 
@@ -223,7 +236,7 @@ def draw_tile(cr, w, h, game, slot, player, ready, away, t, actor=None, controll
                 text(cr, "SPACE WHEN READY", w/2, h/2+58, 14, CYAN, True)
     elif danger:
         label = "IMPACT" if impact else (f"ASTEROID / {game.asteroid_timers.get(slot, 0):.1f}s" if game.kind == "asteroid" else "LASER LOCK")
-        text(cr, label, 20, 65, 12, tint)
+        text(cr, label, 20, 83 if actor in game.enemies else 65, 11, tint)
 
     if game.phase == "warning" and (game.kind != "asteroid" or slot in game.asteroid_timers):
         color(cr, tint if danger else CYAN, .8)
@@ -234,6 +247,10 @@ def draw_tile(cr, w, h, game, slot, player, ready, away, t, actor=None, controll
     tip = lesson[4].format(**hints) if game.training else f"{hints['move']} SWAP / AUTO-FIRE"
     if game.phase == "aim" and player:
         tip = game.aim_hint
+    if player and game.reward_flash:
+        tip = game.reward_text
+    if player and game.contact_flash:
+        tip = "SHOOT THE ENEMY BEFORE ENTERING ITS TILE"
     if player or actor == 0:
         text(cr, tip, w/2, h-42, 10, CYAN, True)
         text(cr, f"{hints['focus']} focus / {hints['close']} quit", w/2, h-26, 10, MUTED, True)

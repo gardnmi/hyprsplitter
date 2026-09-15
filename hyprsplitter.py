@@ -12,7 +12,7 @@ import time
 import traceback
 
 from game import Game
-from combat import center, neighbor, firing_lane, aim_guidance
+from combat import center, neighbor, firing_lane, aim_guidance, overlaps
 from controls import LESSONS, shortcut_labels
 
 
@@ -94,6 +94,7 @@ def main():
             self.external_layout = False
             self.native_maximized = False
             self.focused_actor = 4
+            self.contacts = set()
             self.closing = False
             self.ready = False
             self.away = False
@@ -295,10 +296,35 @@ def main():
                         continue
                     if (self.geometry[i]["at"] == other["at"] and
                             self.geometry[j]["at"] == before["at"] and before["at"] != other["at"]):
-                        self.positions[i], self.positions[j] = self.positions[j], self.positions[i]
+                        players = {4, 9} if self.game.split else {4}
+                        pilot = i if i in players else j if j in players else None
+                        hostile = j if pilot == i else i
+                        if pilot is not None and hostile in self.game.enemies and self.game.playing:
+                            self.game.ram(hostile)
+                            # Preserve the real shortcut, then visibly bounce the
+                            # attempted entry back out of the occupied enemy tile.
+                            hypr.run(f'hl.dsp.focus({{window={self.selector(pilot)}}})',
+                                     f'hl.dsp.window.swap({{target={self.selector(hostile)}}})')
+                            clients = {c["address"]: c for c in hypr.request("clients", True)}
+                            self.geometry = {actor: clients[address] for actor, address in self.addresses.items()}
+                        else:
+                            self.positions[i], self.positions[j] = self.positions[j], self.positions[i]
+                            self.game.message = "WINDOW SWAPPED"
                         used.update((i, j))
-                        self.game.message = "WINDOW SWAPPED"
                         break
+            touching = set()
+            if self.game.playing and not self.game.burst and not self.native_fullscreen and not self.native_maximized:
+                for pilot in ([4, 9] if self.game.split else [4]):
+                    for hostile in self.game.enemies:
+                        if hostile not in self.geometry or pilot not in self.geometry:
+                            continue
+                        a, b = self.geometry[pilot], self.geometry[hostile]
+                        if (a["floating"] or b["floating"]) and overlaps(a, b):
+                            pair = (pilot, hostile)
+                            touching.add(pair)
+                            if pair not in self.contacts:
+                                self.game.ram(hostile)
+            self.contacts = touching
 
         def click(self, widget, event, index):
             if not self.ready or self.rebuilding or index != 4:
@@ -534,6 +560,13 @@ def main():
                 self.fire("up")
                 assert self.game.enemies[0] == 2
                 print("PASS controller shooting hits aligned enemy", flush=True)
+                before = self.geometry[4]["at"][:]
+                hypr.run(f'hl.dsp.focus({{window={self.selector(4)}}})',
+                         f'hl.dsp.window.swap({{target={self.selector(0)}}})')
+                self.sync(observe=True)
+                assert self.game.shields == 2 and self.game.enemies[0] == 2
+                assert self.geometry[4]["at"] == before
+                print("PASS enemy entry costs a shield and bounces ship back", flush=True)
                 self.last_move = 0
                 self.move("right")
                 assert self.game.ability("grow")

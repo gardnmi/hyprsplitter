@@ -1,6 +1,6 @@
 import unittest
 
-from combat import firing_lane, neighbor, aim_guidance
+from combat import firing_lane, neighbor, aim_guidance, overlaps
 from game import Game
 
 
@@ -57,6 +57,43 @@ class CombatTests(unittest.TestCase):
         self.assertFalse(game.ability("grow"))
         self.assertEqual(game.growth, 0)
         self.assertTrue(game.ability("float"))  # Landing is always free.
+
+    def test_enemy_contact_costs_one_shield_and_cannot_spam_damage(self):
+        game = self.game
+        self.assertTrue(game.ram(0))
+        self.assertEqual(game.shields, 2)
+        self.assertEqual(game.enemies[0], 3)
+        self.assertFalse(game.ram(0))
+        self.assertEqual(game.shields, 2)
+        self.assertGreater(game.contact_flash, 0)
+
+    def test_destroying_enemy_repairs_shield_and_clears_contact_danger(self):
+        game = self.game
+        game.ram(0)
+        game.damage(0, 3)
+        self.assertEqual(game.shields, 3)
+        self.assertEqual(game.score, 250)
+        self.assertIn("SHIELD +1", game.reward_text)
+        self.assertNotIn(0, game.enemies)
+        game.contact_cooldown = 0
+        self.assertFalse(game.ram(0))
+        game.damage(2, 3)
+        self.assertEqual(game.shields, 3)
+        self.assertIn("SHIELDS FULL", game.reward_text)
+
+    def test_contact_cannot_hurt_during_briefing_and_can_end_run(self):
+        game = self.game
+        game.phase = "briefing"
+        self.assertFalse(game.ram(0))
+        game.phase = "aim"
+        game.shields = 1
+        self.assertTrue(game.ram(0))
+        self.assertEqual((game.shields, game.phase), (0, "over"))
+
+    def test_only_overlapping_rectangles_make_floating_contact(self):
+        self.assertFalse(overlaps(rect(0, 0), rect(100, 0)))
+        self.assertFalse(overlaps(rect(0, 0), rect(110, 110)))
+        self.assertTrue(overlaps(rect(0, 0), rect(90, 40, floating=True)))
 
     def test_wing_is_vulnerable_while_primary_floats(self):
         game = self.game

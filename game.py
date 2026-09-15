@@ -47,6 +47,11 @@ class Game:
         self.aim_hint = "AUTO-FIRE UP / GET BELOW A TARGET"
         self.locked_target = None
         self.enemy_flashes = {}
+        self.contact_flash = 0.0
+        self.contact_cooldown = 0.0
+        self.reward_flash = 0.0
+        self.reward_text = ""
+        self.kill_rewards = {}
         self.message = "USE YOUR NORMAL OMARCHY WINDOW SHORTCUTS"
 
     def start(self):
@@ -143,6 +148,9 @@ class Game:
         self.shot_cooldown = max(0, self.shot_cooldown - dt)
         self.shot_flash = max(0, self.shot_flash - dt)
         self.enemy_flashes = {i: timer-dt for i, timer in self.enemy_flashes.items() if timer > dt}
+        self.contact_flash = max(0, self.contact_flash-dt)
+        self.contact_cooldown = max(0, self.contact_cooldown-dt)
+        self.reward_flash = max(0, self.reward_flash-dt)
         self.growth = max(0, self.growth - dt)
         self.flight = max(0, self.flight - dt)
         self.burst = max(0, self.burst - dt)
@@ -273,9 +281,15 @@ class Game:
         if self.enemies[enemy] > 0:
             return
         del self.enemies[enemy]
-        self.enemy_flashes[enemy] = .7
+        self.enemy_flashes[enemy] = 1.2
         self.score += 250
         self.energy = min(100, self.energy + 20)
+        repaired = self.shields < 3
+        self.shields = min(3, self.shields + 1)
+        result = "ARMOR BROKEN" if self.boss else "ROUTE CLEAR"
+        self.reward_text = f"{result} / +250 / " + ("SHIELD +1" if repaired else "SHIELDS FULL")
+        self.reward_flash = 2.5
+        self.kill_rewards[enemy] = self.reward_text
         if self.boss == 1:
             self.boss = 2
             self.enemies = {0: 6, 10: 6, 11: 6}
@@ -293,3 +307,18 @@ class Game:
             self.asteroid_flashes.clear()
             self.score += 2000
             self.message = "WINDOW DEVOURER DEFEATED"
+
+    def ram(self, enemy):
+        """Contact with a living enemy hurts; focus alone never causes damage."""
+        if not self.playing or self.burst or enemy not in self.enemies or self.contact_cooldown:
+            return False
+        self.shields = max(0, self.shields-1)
+        self.contact_flash = 1.2
+        self.contact_cooldown = .8
+        self.message = "COLLISION / -1 SHIELD / SHOOT BEFORE ENTERING"
+        if self.shields == 0:
+            self.phase = "over"
+            self.hazards.clear()
+            self.asteroid_timers.clear()
+            self.asteroid_pending.clear()
+        return True

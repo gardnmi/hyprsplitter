@@ -7,6 +7,14 @@ def center(rect):
     return x + w / 2, y + h / 2
 
 
+def overlaps(first, second):
+    x, y = first["at"]
+    w, h = first["size"]
+    a, b = second["at"]
+    c, d = second["size"]
+    return x < a+c and a < x+w and y < b+d and b < y+h
+
+
 def ahead(source, target, direction):
     """Distance to a rectangle intersected by a cardinal ray; None if not aligned."""
     x, y = center(source)
