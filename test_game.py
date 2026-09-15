@@ -5,7 +5,7 @@ from game import Game
 
 class GameTests(unittest.TestCase):
     def test_edges_do_not_wrap(self):
-        game = Game(1)
+        game = Game(1, training=False)
         game.ship = 0
         self.assertIsNone(game.neighbor("left"))
         self.assertIsNone(game.neighbor("up"))
@@ -13,7 +13,7 @@ class GameTests(unittest.TestCase):
         self.assertEqual(game.neighbor("down"), 3)
 
     def test_warning_is_safe_and_impact_damages_only_once(self):
-        game = Game(1)
+        game = Game(1, training=False)
         game.start()
         game.ship = next(iter(game.hazards))
         game.advance(game.remaining / 2)
@@ -24,7 +24,7 @@ class GameTests(unittest.TestCase):
         self.assertEqual(game.shields, 2)
 
     def test_dodge_scores_and_pause_freezes_time(self):
-        game = Game(2)
+        game = Game(2, training=False)
         game.start()
         game.ship = next(i for i in range(9) if i not in game.hazards)
         game.paused = True
@@ -37,7 +37,7 @@ class GameTests(unittest.TestCase):
         self.assertEqual(game.shields, 3)
 
     def test_three_hits_end_game_and_restart_resets(self):
-        game = Game(3)
+        game = Game(3, training=False)
         game.start()
         for _ in range(3):
             if game.kind == "asteroid":
@@ -52,7 +52,7 @@ class GameTests(unittest.TestCase):
         self.assertEqual((game.phase, game.shields, game.score), ("ready", 3, 0))
 
     def test_hard_waves_force_a_dodge_but_leave_reachable_safe_tiles(self):
-        game = Game(4)
+        game = Game(4, training=False)
         for _ in range(100):
             game.next_wave()
             self.assertEqual(len(game.hazards), 6)
@@ -65,7 +65,7 @@ class GameTests(unittest.TestCase):
             game.ship = game.rng.choice(sorted(safe))
 
     def test_opening_wave_is_hard_after_restart(self):
-        game = Game(5)
+        game = Game(5, training=False)
         for _ in range(2):
             game.start()
             self.assertEqual(game.duration, .95)

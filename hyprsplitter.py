@@ -13,6 +13,7 @@ import traceback
 
 from game import Game
 from combat import center, neighbor, firing_lane
+from controls import shortcut_labels
 
 
 class Hyprland:
@@ -50,6 +51,7 @@ def main():
     parser.add_argument("--smoke-test", action="store_true", help="Build the real board, verify swaps and cleanup, then exit")
     parser.add_argument("--combat-smoke-test", action="store_true", help="Verify native abilities and all boss window transitions, then exit")
     parser.add_argument("--boss", action="store_true", help="Start with the Window Devourer on launch")
+    parser.add_argument("--arcade", action="store_true", help="Skip lessons and use the original fast difficulty")
     args = parser.parse_args()
     hypr = Hyprland()
     # The prototype targets the Lua dispatcher API used by this installation.
@@ -72,7 +74,8 @@ def main():
 
     class App:
         def __init__(self):
-            self.game = Game()
+            self.game = Game(training=not (args.boss or args.arcade or args.smoke_test or args.combat_smoke_test))
+            self.game.controls = shortcut_labels(hypr.request("binds", True))
             if args.boss:
                 self.game.wave = 4
             self.windows = {}
@@ -85,6 +88,11 @@ def main():
             self.rebuilding = False
             self.native_fullscreen = False
             self.last_boss_move = 0
+            self.last_native_float = False
+            self.last_native_mode = 0
+            self.external_layout = False
+            self.native_maximized = False
+            self.focused_actor = 4
             self.closing = False
             self.ready = False
             self.away = False
@@ -175,10 +183,12 @@ def main():
             win.connect("key-release-event", self.key_release)
             win.connect("focus-out-event", lambda *_: self.release_fire())
             area = Gtk.DrawingArea()
+            area.add_events(Gdk.EventMask.BUTTON_PRESS_MASK)
+            area.connect("button-press-event", self.click, index)
             area.connect("draw", lambda widget, cr, i=index: draw_tile(
                 cr, widget.get_allocated_width(), widget.get_allocated_height(),
                 self.game, self.slots.get(i, i), i == 4, self.ready,
-                self.away, time.monotonic(), actor=i, controlled=self.controlled))
+                self.away, time.monotonic(), actor=i, controlled=self.focused_actor))
             win.add(area)
             self.windows[index] = win
             win.show_all()
@@ -192,17 +202,17 @@ def main():
                 self.release_fire()
             return True
 
-        def sync(self):
+        def sync(self, observe=False):
             clients = hypr.request("clients", True)
             by_address = {c["address"]: c for c in clients}
             if any(a not in by_address for a in self.addresses.values()):
                 raise RuntimeError("A game tile was closed. Exiting the whole board.")
+            previous = getattr(self, "geometry", {})
             self.geometry = {i: by_address[a] for i, a in self.addresses.items()}
-            allowed_float = {4} if self.game.flight or self.applied[3] else set()
-            if self.game.boss == 3 or self.applied[1] == 3:
-                allowed_float.add(0)
-            if any(c["workspace"]["id"] != self.workspace or (c["floating"] and i not in allowed_float) for i, c in self.geometry.items()):
+            if any(c["workspace"]["id"] != self.workspace for c in self.geometry.values()):
                 raise RuntimeError("A tile left the game board. Restart to rebuild it.")
+            if observe:
+                self.observe_desktop(previous)
             if not hasattr(self, "arena"):
                 x = min(c["at"][0] for c in self.geometry.values())
                 y = min(c["at"][1] for c in self.geometry.values())
@@ -211,7 +221,7 @@ def main():
                 self.arena = x, y, right - x, bottom - y
             # Physical centers determine hazard sectors even after resizing/splitting.
             # Hyprland reports destination geometry while its native animation runs.
-            if not self.native_fullscreen:
+            if not self.native_fullscreen and not self.native_maximized:
                 x, y, w, h = self.arena
                 self.slots = {i: min(2, max(0, int((center(c)[1]-y)/h*3)))*3 +
                               min(2, max(0, int((center(c)[0]-x)/w*3))) for i, c in self.geometry.items()}
@@ -220,10 +230,73 @@ def main():
             current = hypr.request("activeworkspace", True)
             self.away = current["id"] != self.workspace
             focused = next((c for c in clients if c.get("focusHistoryID") == 0), None)
+            self.focused_actor = next((i for i, a in self.addresses.items() if focused and a == focused["address"]), None)
+            if self.focused_actor in (4, 9):
+                self.controlled = self.focused_actor
             if focused and focused["address"] not in self.addresses.values():
                 self.away = True
             if self.away:
                 self.release_fire()
+            self.last_native_float = self.geometry[4]["floating"]
+            self.last_native_mode = self.geometry[4].get("fullscreen", 0)
+            self.game.is_floating = self.last_native_float
+
+        def observe_desktop(self, previous):
+            """Observe real desktop shortcuts. Do not replace or intercept any binding."""
+            ship = self.geometry[4]
+            floating = ship["floating"]
+            mode = ship.get("fullscreen", 0)
+            if floating != self.last_native_float:
+                self.game.flight = 3 if floating else 0
+                self.external_layout = True
+                self.game.message = "FLOATING / USE SUPER + LEFT-DRAG" if floating else "LANDED / TILING RESTORED"
+            if mode != self.last_native_mode:
+                self.external_layout = True
+                if mode == 2:
+                    if not self.game.ability("fullscreen"):
+                        self.game.burst = .9  # Practice still demonstrates real fullscreen.
+                    self.native_fullscreen = True
+                    self.native_maximized = False
+                elif mode == 1:
+                    self.native_maximized = True
+                    self.native_fullscreen = False
+                    self.game.burst = 0
+                    self.game.growth = 5
+                else:
+                    self.native_maximized = False
+                    self.native_fullscreen = False
+                    self.game.burst = 0
+            old_ship = previous.get(4)
+            if old_ship and not mode and not floating and not self.last_native_mode:
+                if math.prod(ship["size"]) > math.prod(old_ship["size"])*1.08:
+                    self.game.growth = 5
+                    self.external_layout = True
+                    self.game.message = "RESIZED / DOUBLE DAMAGE FOR 5 SECONDS"
+            # Exact exchanged rectangles identify native swaps without treating a
+            # split rotation or resize as a swap. Keep structural leaves in sync.
+            used = set()
+            for i, before in previous.items():
+                if i in used or i not in self.geometry:
+                    continue
+                for j, other in previous.items():
+                    if j <= i or j in used or j not in self.geometry:
+                        continue
+                    if (self.geometry[i]["at"] == other["at"] and
+                            self.geometry[j]["at"] == before["at"] and before["at"] != other["at"]):
+                        self.positions[i], self.positions[j] = self.positions[j], self.positions[i]
+                        used.update((i, j))
+                        self.game.message = "WINDOW SWAPPED"
+                        break
+
+        def click(self, widget, event, index):
+            if not self.ready or self.rebuilding or index != 4:
+                return False
+            scale = min(widget.get_allocated_width()/440, widget.get_allocated_height()/290, 1.35)
+            width = widget.get_allocated_width()/scale
+            if 47 <= event.y/scale <= 75 and width-158 <= event.x/scale <= width-16:
+                if not self.game.training or self.game.wave >= 16:
+                    self.game.ability("split")
+            return True
 
         def selector(self, index):
             return f'"address:{self.addresses[index]}"'
@@ -325,6 +398,15 @@ def main():
                 tiles.extend(path)
             self.game.fire(direction, targets, tiles)
 
+        def auto_fire(self):
+            if not self.game.playing or self.game.shot_cooldown or self.rebuilding:
+                return
+            sources = [4, 9] if self.game.split else [4]
+            for direction in ("up", "right", "down", "left"):
+                if any(firing_lane(self.geometry, source, self.game.enemies, direction)[0] is not None for source in sources):
+                    self.fire(direction)
+                    return
+
         def validate_grid(self):
             widths = [c["size"][0] for c in self.geometry.values()]
             heights = [c["size"][1] for c in self.geometry.values()]
@@ -362,23 +444,13 @@ def main():
         def key(self, _window, event):
             def handle():
                 key = Gdk.keyval_name(event.keyval).lower()
+                if event.state & (Gdk.ModifierType.SUPER_MASK | Gdk.ModifierType.MOD4_MASK | Gdk.ModifierType.MOD1_MASK | Gdk.ModifierType.CONTROL_MASK):
+                    return False
                 if key in ("escape", "q"):
                     self.close()
                 elif self.ready and not self.rebuilding:
-                    directions = {"w": "up", "a": "left", "s": "down", "d": "right",
-                                  "up": "up", "left": "left", "down": "down", "right": "right"}
-                    if key in directions:
-                        self.move(directions[key])
-                    elif key in ("i", "j", "k", "l"):
-                        self.fire_key = {"i": "up", "j": "left", "k": "down", "l": "right"}[key]
-                        self.fire(self.fire_key)
-                    elif key in ("g", "e", "f", "x"):
-                        self.game.ability({"g": "grow", "e": "split", "f": "float", "x": "fullscreen"}[key])
-                    elif key == "tab" and self.game.split:
-                        self.controlled = 9 if self.controlled == 4 else 4
-                        hypr.focus(self.addresses[self.controlled])
-                    elif key in ("space", "return"):
-                        if self.game.phase == "ready":
+                    if key in ("space", "return"):
+                        if self.game.phase in ("ready", "briefing"):
                             self.game.start()
                         elif self.game.phase not in ("over", "victory"):
                             self.game.paused = not self.game.paused
@@ -388,6 +460,10 @@ def main():
                             self.game.wave = 4
                         self.controlled = 4
                         self.release_fire()
+                        self.external_layout = False
+                        self.native_maximized = False
+                        hypr.run(f'hl.dsp.window.fullscreen({{window={self.selector(4)}, mode="fullscreen", action="unset"}})')
+                        self.rebuild()
                 return True
             return self.guarded(handle)
 
@@ -404,20 +480,23 @@ def main():
                 if self.rebuilding:
                     self.rebuild_tick()
                     return True
+                if now - self.last_sync > .08:
+                    self.sync(observe=not (args.smoke_test or args.combat_smoke_test))
+                    self.last_sync = now
                 want_fullscreen = bool(self.game.burst)
                 if want_fullscreen != self.native_fullscreen:
                     hypr.run(f'hl.dsp.window.fullscreen({{window={self.selector(4)}, mode="fullscreen", action="{"set" if want_fullscreen else "unset"}"}})')
                     self.native_fullscreen = want_fullscreen
-                if self.native_signature() != self.applied and not self.native_fullscreen:
+                    self.last_native_mode = 2 if want_fullscreen else 0
+                structural_change = self.native_signature()[:2] != self.applied[:2] or (12 in self.windows and not self.game.flight)
+                if self.external_layout and not structural_change:
+                    self.applied = self.native_signature()
+                if (structural_change or self.native_signature() != self.applied) and not self.native_fullscreen and not self.native_maximized:
                     self.rebuild()
                     return True
-                if now - self.last_sync > .25:
-                    self.sync()
-                    self.last_sync = now
                 if not self.away and not args.combat_smoke_test:
                     self.game.advance(dt)
-                    if self.fire_key:
-                        self.fire(self.fire_key)
+                    self.auto_fire()
                     if self.game.boss == 3 and self.game.playing and not self.native_fullscreen and now - self.last_boss_move > .1:
                         x, y, w, h = self.arena
                         bx = x + (w-330) * (.5 + .45*math.sin(now*.8))

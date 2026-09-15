@@ -1,11 +1,14 @@
 """Deterministic game rules, independent of GTK and Hyprland."""
 
 import random
+from controls import lesson_for, shortcut_labels
 
 
 class Game:
-    def __init__(self, seed=None):
+    def __init__(self, seed=None, training=True):
         self.rng = random.Random(seed)
+        self.training = training
+        self.controls = shortcut_labels([])
         self.restart()
 
     def restart(self):
@@ -33,49 +36,72 @@ class Game:
         self.wing = None
         self.boss = 0
         self.enemies = {0: 3, 2: 3}
+        if self.training:
+            self.enemies = {}
+        self.lesson = "move" if self.training else "arcade"
         self.shot_cooldown = 0.0
         self.shot_flash = 0.0
         self.shot_direction = "up"
         self.shot_tiles = set()
-        self.message = "IJKL FIRE / G GROW / E SPLIT / F FLOAT / X FULLSCREEN"
+        self.message = "USE YOUR NORMAL OMARCHY WINDOW SHORTCUTS"
 
     def start(self):
-        if self.phase == "ready":
+        if self.phase == "briefing":
+            self.wave -= 1
+            self.next_wave()
+        elif self.phase == "ready":
             self.next_wave()
 
     def next_wave(self):
         self.wave += 1
+        if self.training:
+            lesson = lesson_for(self.wave)[1]
+            if lesson != self.lesson:
+                self.lesson = lesson
+                self.phase = "briefing"
+                self.hazards.clear()
+                self.asteroid_timers.clear()
+                self.asteroid_flashes.clear()
+                self.message = "SPACE WHEN YOU ARE READY"
+                return
         self.hit = False
         self.phase = "warning"
-        if self.wave == 5 and self.boss == 0:
+        if self.wave == (22 if self.training else 5) and self.boss == 0:
             self.boss = 1
             self.enemies = {0: 18}
             self.message = "THE WINDOW DEVOURER / BREAK ITS ARMOR"
-        elif self.boss == 0:
+        elif self.boss == 0 and (not self.training or self.wave >= 7):
             for index in (0, 2):
                 self.enemies.setdefault(index, 3)
         # Start at showcase intensity: no slow opening waves.
         self.duration = max(0.65, 0.95 - (self.wave - 1) * 0.015)
+        if self.training:
+            self.duration = 3.2 if self.wave < 4 else 2.8 if self.wave < 10 else 2.4 if self.wave < 22 else 1.8
         self.remaining = self.duration
         self.kind = "asteroid" if self.wave % 3 == 0 else "laser"
+        if self.training:
+            self.kind = "asteroid" if (4 <= self.wave <= 6 or self.wave >= 10 and self.wave % 3 == 0) else "laser"
         self.asteroid_timers.clear()
         self.asteroid_delays.clear()
         self.asteroid_flashes.clear()
         self.asteroid_hits.clear()
         if self.kind == "asteroid":
             others = [i for i in range(9) if i != self.ship]
-            self.hazards = {self.ship, *self.rng.sample(others, 5)}
+            count = 2 if self.training and self.wave < 22 else 5
+            self.hazards = {self.ship, *self.rng.sample(others, count)}
             order = self.rng.sample(sorted(self.hazards), len(self.hazards))
             deadline = self.duration
             for slot in order:
                 self.asteroid_timers[slot] = deadline
-                deadline += self.rng.uniform(.18, .34)
+                deadline += self.rng.uniform(.35, .65) if self.training else self.rng.uniform(.18, .34)
             self.asteroid_delays = self.asteroid_timers.copy()
         else:
             self.axis = self.rng.choice(("row", "column"))
             ship_lane = self.ship // 3 if self.axis == "row" else self.ship % 3
             safe_lane = self.rng.choice([i for i in range(3) if i != ship_lane])
             self.hazards = {i for i in range(9) if (i // 3 if self.axis == "row" else i % 3) != safe_lane}
+            if self.training and self.wave < 22:
+                self.hazards = {i for i in range(9) if (i // 3 if self.axis == "row" else i % 3) == ship_lane}
 
     def neighbor(self, direction):
         dr, dc = {"left": (0, -1), "right": (0, 1), "up": (-1, 0), "down": (1, 0)}[direction]
@@ -84,7 +110,7 @@ class Game:
         return row * 3 + col if 0 <= row < 3 and 0 <= col < 3 else None
 
     def advance(self, dt):
-        if self.paused or self.phase in ("ready", "over"):
+        if self.paused or self.phase in ("ready", "briefing", "over"):
             return
         if self.phase == "victory":
             self.burst = max(0, self.burst - dt)
@@ -114,7 +140,7 @@ class Game:
             self.remaining = 0.25
         elif self.phase == "impact":
             self.phase = "over" if self.shields == 0 else "cooldown"
-            self.remaining = 0.12
+            self.remaining = 1.2 if self.training else .12
             self.hazards = set()
         else:
             self.next_wave()
@@ -146,7 +172,7 @@ class Game:
 
     @property
     def playing(self):
-        return not self.paused and self.phase not in ("ready", "over", "victory")
+        return not self.paused and self.phase not in ("ready", "briefing", "over", "victory")
 
     def ability(self, name):
         if not self.playing or self.burst:
@@ -170,7 +196,7 @@ class Game:
             self.message = "GUNSHIP / DOUBLE DAMAGE FOR 5 SECONDS"
         elif name == "split":
             self.split = True
-            self.message = "WING DEPLOYED / TAB SWITCHES SHIPS"
+            self.message = "WING DEPLOYED / USE YOUR WINDOW FOCUS SHORTCUTS"
         elif name == "float":
             self.flight = 3
             self.message = "FREE FLIGHT / 3 SECONDS OF EVASION"

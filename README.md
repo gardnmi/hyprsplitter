@@ -1,89 +1,103 @@
 # Hyprsplitter
 
-A spaceship game played with **real Hyprland windows**. Dodge laser lanes by
-swapping your ship's tile, shoot across the layout, and fight a boss that
-breaks into separate windows. Grow, split, float, or fullscreen your ship.
+Learn **Omarchy / Hyprland shortcuts** by piloting a real desktop window.
+The game observes native compositor actions: your normal shortcuts move,
+resize, float and fullscreen the ship. It does not install replacement bindings.
 
-## Play
+## Start training
 
 ```sh
 ./play
-./play --boss   # Start directly with the Window Devourer, useful for recording
 ```
 
-The game opens on the first unused workspace starting at 90. **Space** launches
-the game. Controls work from any game window; your ship stays the same actual
-window as you maneuver. Movement uses your normal Hyprland animations.
+A dedicated workspace opens, starting at the first unused number from 90.
+Press **Space** when ready. The default mode introduces one mechanic at a time,
+with three practice waves per lesson. Each new lesson stops on an explanation
+card until you press Space. Earlier mechanics gradually return in later lessons.
 
-| Key | Action |
+| Lesson | What you practice |
 | --- | --- |
-| Arrows / WASD | Move the selected ship: swap tiles, or steer during free flight |
-| I / J / K / L | Shoot up / left / down / right; hold to keep firing |
-| G | Grow into a larger gunship: double damage for 5 seconds; 25 energy |
-| E | Split off a second ship window; 30 energy. Press again to merge for free |
-| Tab | Switch control between the two ships |
-| F | Float the primary ship for 3 seconds; 35 energy. Press again to land early |
-| X | Fullscreen nova: briefly fullscreen the primary ship and hit every enemy; 100 energy |
-| Space / Enter | Start or pause |
-| R | Reset the run and restore the board |
-| Escape / Q | Close the entire game |
+| 1 | Focus the ship and swap windows; one slow laser lane, no enemies |
+| 2 | Dodge three asteroids with independent countdowns |
+| 3 | Line up shots by moving; shooting is automatic |
+| 4 | Toggle floating and drag the ship, then return to tiling |
+| 5 | Resize the ship for a temporary double-damage bonus |
+| 6 | Deploy a wing, change split orientation, and focus either ship |
+| 7 | Learn the difference between fullscreen and maximize |
+| 8 | Combine the mechanics against the Window Devourer |
 
-### Survival and shooting
+Opening laser warnings last **3.2 seconds**, with a **1.2-second breather** between
+waves. Later lessons speed up gradually. The boss does not arrive until lesson 8.
 
-The opening is deliberately hard: six of the nine screen sectors are targeted
-from wave one, with a 0.95-second warning shrinking to 0.65 seconds. Red means
-laser lock; amber means incoming asteroids. You have three shared shields.
-Lasers strike together. Asteroids have individual countdowns and land one at a
-time, with randomized 0.18–0.34 second gaps. A cleared sector becomes safe while
-other asteroids are still inbound.
+## Real desktop controls
 
-Shoot along a clear horizontal or vertical line through the physical layout.
-Shots hit the first enemy in that direction. Enemy windows block movement;
-empty tiles can be swapped. Both ships fire while split, but either can take a
-hit. Flying protects the primary ship from sector attacks; the wing remains
-vulnerable. Energy regenerates over time, with a bonus for destroying enemies.
+Use your installed shortcuts. These are the stock Omarchy bindings:
 
-### The Window Devourer
+| Shortcut | Desktop action / game effect |
+| --- | --- |
+| Super + arrows | Focus an adjacent window; focus your ship before maneuvering |
+| Super + Shift + arrows | Swap the focused window in that direction |
+| Super + T | Toggle floating / tiling; floating gives 3 seconds of evasion |
+| Super + left-drag | Move a floating window |
+| Super + right-drag | Resize a window |
+| Super + minus / equals | Resize horizontally; Shift changes height |
+| Super + J | Rotate an existing split between horizontal and vertical |
+| Super + F | Fullscreen; activates a brief nova |
+| Super + Alt + F | Maximize / full width |
+| Super + W | Close the game window and end the session |
 
-The boss arrives on wave five, or immediately with `--boss`:
+**Super is the Windows key.** The game reads binding descriptions at startup to
+label fullscreen, maximize, floating, split rotation and close actions. For
+example, the development machine swaps the stock fullscreen/maximize shortcuts:
+its hints show **Super+Alt+F** for fullscreen and **Super+F** for maximize.
+Unrecognized custom bindings still work natively, but may require a manual hint
+update. Your configured Super+arrows focus shortcuts also work normally.
 
-1. **Armored window:** a large tile squeezes the battlefield. Destroy its 18 HP.
-2. **Fracture:** its tile splits into three independently targetable windows,
-   each with 6 HP.
-3. **Detached core:** the fragments merge into a 12 HP floating boss that moves
-   across the top of the arena. Line up shots and finish it for victory.
+The only game-specific keys are **Space / Enter** to start, continue or pause,
+**R** to restart, and **Escape / Q** to exit. Old WASD/IJKL and ability-letter
+controls are removed. Shots automatically target the first aligned enemy.
 
-All abilities affect actual compositor windows. Formations rebuild their tiling
-tree when needed, keeping surviving ship windows alive. Merging and landing
-restore the tiled formation. Fullscreen nova returns to the previous window mode.
+**Deploying a wing is a game button**, unlocked in lesson 6, costing 30 energy.
+Click it again to merge. Super+J is correctly taught as split orientation;
+it does not create windows. Focus either ship with the real focus shortcuts.
 
-## Requirements
+Native window changes persist as desktop actions. A resize grants five seconds
+of stronger shots. Floating evasion lasts three seconds; remain floating or
+land using your real toggle. Fullscreen nova exits fullscreen after its effect
+(or toggle it off yourself). Formation changes and restart may rebuild the
+game's tiling tree while keeping surviving ship windows alive.
 
-- Hyprland with the Lua dispatcher API (**tested on 0.56.2**).
+## Boss and arcade practice
+
+```sh
+./play --boss     # Jump straight to the boss, skipping lessons
+./play --arcade   # Original fast difficulty, without instruction pauses
+```
+
+The Window Devourer has an enlarged armored tile (18 HP), breaks into three
+separate windows (6 HP each), then becomes a moving floating core (12 HP).
+Destroy the core for victory. Split ships share three shields; either may take
+a hit. Laser volleys fire together; asteroids resolve one sector at a time.
+
+## Requirements and behavior
+
+- Hyprland with the Lua dispatcher API, tested on **0.56.2**.
 - Dwindle layout with `preserve_split` and `use_active_for_splits` enabled.
-- Python 3.12+, GTK 3, PyGObject and pycairo.
-- The launcher uses `/usr/bin/python` so it can find system GI bindings.
+- Python 3.12+, GTK 3, PyGObject and pycairo. The launcher uses system Python.
 
-No persistent desktop configuration is edited and no global bindings are
-installed. A process-specific window rule is disabled on normal exit. Closing
-any game tile ends the entire session. Switching away pauses gameplay; exiting
-from the game workspace returns you to your previous workspace. A forced kill
-can leave an inert process-specific rule until the next Hyprland config reload.
+No persistent desktop configuration is edited, and no global bindings are
+installed or intercepted. A process-specific window rule is disabled on exit.
+Switching away pauses gameplay. Closing any game window ends the session.
+Exiting from the game workspace returns to your previous workspace.
 
-## Prototype boundaries
+Keep other applications out of the game workspace. Native swaps, split
+rotations, resizing and floating are supported; moving a tile to another
+workspace ends the session. Hazards use nine screen sectors and classify each
+window by its center. Collision uses destination geometry during native window
+animations. Projectiles are drawn inside windows rather than being separate
+compositor windows. This remains a prototype with further balancing expected.
 
-- This is a compositor experiment targeting the tested Hyprland version.
-- Don't introduce other apps into the game workspace or manually change its
-  tiling tree while playing. Moving a tile off the board ends the session.
-- The screen is divided into nine hazard sectors. A window's center determines
-  its sector after resizing. Collision uses destination geometry during native
-  movement animations. Projectiles are drawn inside windows; they are not
-  separate desktop windows.
-- Growth currently costs energy and resizes the ship; it does not absorb kills.
-  Floating provides timed evasion with keyboard steering. These are first-pass
-  abilities, with further balancing expected.
-
-## Validation
+## Checks
 
 ```sh
 python -m unittest -v
@@ -91,24 +105,14 @@ python -m unittest -v
 ./play --combat-smoke-test
 ```
 
-The first live test checks eight real window swaps. The combat test checks
-shooting, growth, wing deployment/movement/merging, flight/landing, fullscreen,
-every boss transition, persistent ship identity and board restoration. Both
-temporarily open their own game workspace and close it afterward. Run live
-tests one at a time and keep their workspace focused.
+Live checks temporarily open their own board. Run them one at a time and leave
+that workspace focused. They exercise physical swaps, shooting, growth, wing
+movement/merging, flight/landing, fullscreen, boss transitions, persistent ship
+identity and restart cleanup. Rule tests cover lesson sequencing, instruction
+pauses, customized hint labels and staggered asteroid collisions.
 
-## Versions
-
-- [`v0.1.0`](https://github.com/gardnmi/hyprsplitter/tree/v0.1.0): the original
-  hard-mode dodge prototype, preserved before combat development.
-- Current: shooting, three-stage boss and native window abilities.
-
-## Source
-
-- `game.py`: combat, hazards, energy, abilities and boss state.
-- `combat.py`: physical navigation and firing lanes.
-- `hyprsplitter.py`: GTK windows, Hyprland IPC, input and lifecycle.
-- `render.py`: procedural Cairo vector artwork and HUD.
+Earlier versions are preserved as Git tags: `v0.1.0` is the initial dodge
+prototype; `v0.2.0` adds combat and window abilities.
 
 API references: [Hyprland dispatchers](https://github.com/hyprwm/hyprland-wiki/blob/main/content/configuring/core/dispatchers.md),
 [Dwindle layout](https://github.com/hyprwm/hyprland-wiki/blob/main/content/configuring/layouts/dwindle-layout.md),

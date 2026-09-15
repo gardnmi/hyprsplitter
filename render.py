@@ -2,6 +2,7 @@
 
 import math
 import random
+from controls import lesson_for
 
 BG = (0.025, 0.043, 0.075)
 CYAN = (0.3, 0.94, 0.86)
@@ -79,6 +80,8 @@ def draw_tile(cr, w, h, game, slot, player, ready, away, t, actor=None, controll
     actor = slot if actor is None else actor
     wing = actor == 9
     player = player or wing
+    lesson = lesson_for(max(1, game.wave))
+    hints = game.controls
     color(cr, BG)
     cr.paint()
     # Scale the interface down gracefully on smaller displays.
@@ -137,13 +140,15 @@ def draw_tile(cr, w, h, game, slot, player, ready, away, t, actor=None, controll
         cr.rotate({"up": 0, "right": math.pi/2, "down": math.pi, "left": -math.pi/2}[game.shot_direction])
         ship(cr, 0, 0, t)
         cr.restore()
-        name = "WING / TAB TO SWITCH" if wing else "PILOT 01"
+        name = "WING" if wing else "PILOT 01"
         if actor == controlled:
             name += " / ACTIVE"
         if game.growth and actor == 4:
             name = "GUNSHIP / DOUBLE DAMAGE"
         if game.flight and actor == 4:
-            name = f"FREE FLIGHT / {game.flight:.1f}s"
+            name = f"EVASION / {game.flight:.1f}s"
+        elif getattr(game, "is_floating", False) and actor == 4:
+            name = f"FLOATING / {hints['float']} TO LAND"
         text(cr, name, w/2, h/2+60, 13, CYAN, True)
         for i in range(3):
             color(cr, CYAN if i < game.shields else MUTED, 1 if i < game.shields else .25)
@@ -162,7 +167,7 @@ def draw_tile(cr, w, h, game, slot, player, ready, away, t, actor=None, controll
         cr.restore()
         title = {1: "THE WINDOW DEVOURER", 2: "ARMOR FRAGMENT", 3: "DETACHED CORE"}.get(game.boss, "INTERCEPTOR")
         text(cr, title, w/2, h/2+50, 14, RED, True)
-        text(cr, f"HULL {game.enemies[actor]:02d} / IJKL TO FIRE", w/2, h/2+69, 12, WHITE, True)
+        text(cr, f"HULL {game.enemies[actor]:02d} / ALIGN TO AUTO-FIRE", w/2, h/2+69, 11, WHITE, True)
     elif not danger:
         text(cr, "CLEAR", w/2, h/2+5, 17, MUTED, True)
 
@@ -172,7 +177,7 @@ def draw_tile(cr, w, h, game, slot, player, ready, away, t, actor=None, controll
         line(cr, points, CYAN, 16, .2)
         line(cr, points, WHITE, 3, .9)
 
-    if not ready or game.phase in ("ready", "over", "victory") or game.paused or away:
+    if not ready or game.phase in ("ready", "briefing", "over", "victory") or game.paused or away:
         if actor == 0 or (player and game.phase != "ready"):
             color(cr, BG, .92)
             cr.rectangle(16, h/2-70, w-32, 145)
@@ -186,15 +191,17 @@ def draw_tile(cr, w, h, game, slot, player, ready, away, t, actor=None, controll
             elif away or game.paused:
                 title, subtitle = "PAUSED", "Return to board / Space to resume" if away else "Space to resume"
             else:
-                title, subtitle = "WEAPONIZE THE WINDOW.", "WASD MOVE / IJKL SHOOT"
-            text(cr, title, w/2, h/2-26, 22, CYAN, True)
+                title = lesson[2] if game.training else "OMARCHY FLIGHT PRACTICE"
+                subtitle = lesson[3].format(**hints) if game.training else f"Swap windows: {hints['move']}"
+            text(cr, title, w/2, h/2-26, 18, CYAN, True)
             text(cr, subtitle, w/2, h/2+3, 13, WHITE, True)
-            if ready and game.phase == "ready":
-                text(cr, "G grow / E split / F float / X nova", w/2, h/2+30, 12, MUTED, True)
-                text(cr, "SPACE TO LAUNCH", w/2, h/2+58, 15, CYAN, True)
+            if ready and game.phase in ("ready", "briefing"):
+                detail = lesson[4].format(**hints) if game.training else "Auto-fire / use your real desktop shortcuts"
+                text(cr, detail, w/2, h/2+30, 11, WHITE, True)
+                text(cr, "SPACE WHEN READY", w/2, h/2+58, 14, CYAN, True)
     elif danger:
         label = "IMPACT" if impact else (f"ASTEROID / {game.asteroid_timers.get(slot, 0):.1f}s" if game.kind == "asteroid" else "LASER LOCK")
-        text(cr, label, w/2, 65, 13, tint, True)
+        text(cr, label, 20, 65, 12, tint)
 
     if game.phase == "warning" and (game.kind != "asteroid" or slot in game.asteroid_timers):
         color(cr, tint if danger else CYAN, .8)
@@ -202,9 +209,19 @@ def draw_tile(cr, w, h, game, slot, player, ready, away, t, actor=None, controll
                     if game.kind == "asteroid" else game.remaining/game.duration)
         cr.rectangle(20, h-61, (w-40)*max(0, progress), 3)
         cr.fill()
-    text(cr, f"ENERGY {int(game.energy):03d}  G:25 E:30 F:35 X:100", w/2, h-43, 11, CYAN, True)
-    text(cr, "WASD MOVE / IJKL FIRE / TAB WING / SPACE PAUSE", w/2, h-27, 10, MUTED, True)
-    text(cr, "G GROW / E SPLIT / F FLOAT / X NOVA / R RESET / ESC QUIT", w/2, h-12, 9, MUTED, True)
+    tip = lesson[4].format(**hints) if game.training else f"{hints['move']} SWAP / AUTO-FIRE"
+    if player or actor == 0:
+        text(cr, tip, w/2, h-42, 10, CYAN, True)
+        text(cr, f"{hints['focus']} focus / {hints['close']} quit", w/2, h-26, 10, MUTED, True)
+        text(cr, "SPACE pause / R restart / Super = Windows key", w/2, h-11, 9, MUTED, True)
+    elif actor == controlled:
+        text(cr, f"Focus your ship: {hints['focus']}", w/2, h-22, 12, CYAN, True)
+    if actor == 4 and (not game.training or game.wave >= 16):
+        color(cr, CYAN, .15)
+        cr.rectangle(w-158, 47, 142, 28)
+        cr.fill()
+        button = "MERGE WING" if game.split else ("DEPLOY WING (30)" if game.energy >= 30 else f"CHARGING {int(game.energy)}/30")
+        text(cr, button, w-87, 65, 11, CYAN, True)
     if game.burst and actor == 4:
         color(cr, CYAN, .35)
         cr.paint()

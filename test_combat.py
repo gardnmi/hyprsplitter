@@ -10,7 +10,7 @@ def rect(x, y, w=100, h=100, floating=False):
 
 class CombatTests(unittest.TestCase):
     def setUp(self):
-        self.game = Game(7)
+        self.game = Game(7, training=False)
         self.game.start()
 
     def test_bullets_hit_first_aligned_enemy_and_stop(self):

@@ -5,7 +5,7 @@ from game import Game
 
 class AsteroidTests(unittest.TestCase):
     def setUp(self):
-        self.game = Game(12)
+        self.game = Game(12, training=False)
         self.game.wave = 2
         self.game.next_wave()
 
