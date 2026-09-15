@@ -1,5 +1,6 @@
 import unittest
 from game import Game, side
+from field import COLUMNS, ROWS, SECTORS, DODGES, WARNING, MAX_ROCKS, grid_steps
 from controls import MISSIONS, shortcut_labels
 
 ARENA = (0, 0, 1200, 900)
@@ -30,11 +31,11 @@ class Lessons(unittest.TestCase):
             self.assertEqual(bool(g.enemies), mission[0]=='shoot')
 
     def test_asteroids_require_both_travel_and_dodges(self):
-        g = self.game('asteroids');g.progress=6
+        g = self.game('asteroids');g.progress=DODGES
         g.advance(.1);self.assertEqual(g.state,'active')
-        for y in range(3):
-            for x in range(3):
-                g.observe({4:rect(x*400,y*300,400,300)},ARENA,4)
+        for y in range(ROWS):
+            for x in range(COLUMNS):
+                g.observe({4:rect(x*1200/COLUMNS,y*900/ROWS,1200/COLUMNS,900/ROWS)},ARENA,4)
         g.advance(.1);self.assertEqual(g.state,'complete')
         self.assertFalse(g.rocks)
 
@@ -47,9 +48,9 @@ class Lessons(unittest.TestCase):
 
     def test_each_random_arrival_gets_a_full_warning(self):
         g = self.game('asteroids');g.pending=[(.1,1),(.8,2)]
-        g.advance(.2);self.assertEqual(g.rocks,{1:3.2})
-        g.advance(.7);self.assertEqual(g.rocks[2],3.2)
-        self.assertLess(g.rocks[1],3.2)
+        g.advance(.2);self.assertEqual(g.rocks,{1:WARNING})
+        g.advance(.7);self.assertEqual(g.rocks[2],WARNING)
+        self.assertLess(g.rocks[1],WARNING)
 
     def test_random_bursts_include_solos_clusters_and_staggered_arrivals(self):
         g=self.game('asteroids');sizes=set();simultaneous=False;staggered=False
@@ -60,6 +61,25 @@ class Lessons(unittest.TestCase):
                 simultaneous |= len({d for d,_ in g.pending})==1
                 staggered |= len({d for d,_ in g.pending})>1
         self.assertIn(1,sizes);self.assertTrue(simultaneous and staggered)
+
+    def test_large_grid_and_overlapping_asteroids_leave_clear_sectors(self):
+        steps = grid_steps()
+        self.assertEqual(len(steps), SECTORS)
+        created = set()
+        for actor, parent, _, _ in steps:
+            self.assertTrue(parent is None or parent in created)
+            self.assertNotIn(actor, created)
+            created.add(actor)
+        self.assertEqual(created, set(range(SECTORS)))
+        g=self.game('asteroids')
+        peak=0
+        for _ in range(1000):
+            g.advance(.05)
+            threatened=set(g.rocks) | {s for _,s in g.pending}
+            peak=max(peak,len(threatened))
+            self.assertLessEqual(len(threatened),MAX_ROCKS)
+            self.assertTrue(all(0 <= s < SECTORS for s in threatened))
+        self.assertGreaterEqual(peak,6)
 
     def test_pause_and_floating_cannot_advance_asteroid_lesson(self):
         g=self.game('asteroids');g.rocks={0:2};g.paused=True;g.advance(5)

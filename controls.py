@@ -24,7 +24,7 @@ def shortcut_labels(bindings):
 
 
 MISSIONS = [
-    ("asteroids", "01 / ASTEROID FIELD", "Move your ship through all nine sectors.", "{move} to move your ship", "Visit 9 sectors and dodge 6 asteroid impacts."),
+    ("asteroids", "01 / ASTEROID FIELD", "Move your ship through a 24-sector asteroid field.", "{move} to move your ship", "Visit 24 sectors and dodge 12 asteroid impacts."),
     ("lasers", "02 / LASER GATES", "Two windows. Get your ship into the safe half.", "{split} rotates / {move} swaps", "Clear 4 gates. Each miss retries the same gate."),
     ("shoot", "03 / TARGET PRACTICE", "Focus a red ship, then close its window.", "{focus} to aim / {close} to fire", "Close all 3 red ships. Keep the cyan ship."),
     ("float", "04 / DOCKING", "Undock, fly to the beacon, then land.", "{float} to float / {drag} to fly", "Follow one docking instruction at a time."),

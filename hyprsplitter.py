@@ -11,6 +11,7 @@ import time
 import traceback
 
 from game import Game
+from field import grid_steps, SECTORS, sector
 from controls import MISSIONS, shortcut_labels
 
 
@@ -111,9 +112,7 @@ def main():
             self.geometry.clear()
             self.arena = None
             if self.game.mission == 'asteroids':
-                steps = [(0,None,None,None),(1,0,'r',.666667),(2,1,'r',1),
-                         (3,0,'d',.666667),(6,3,'d',1),(4,1,'d',.666667),
-                         (7,4,'d',1),(5,2,'d',.666667),(8,5,'d',1)]
+                steps = grid_steps()
             elif self.game.mission == 'shoot':
                 steps = [(4,None,None,None),(0,4,'r',1),(1,4,'d',1),(2,0,'d',1)]
             else:
@@ -275,7 +274,11 @@ def main():
         def smoke(self):
             stage = self.smoke_stage
             if stage == 0:
-                assert len(self.geometry) == 9
+                assert len(self.geometry) == SECTORS
+                assert len({sector(c, self.arena) for c in self.geometry.values()}) == SECTORS
+                widths = [c["size"][0] for c in self.geometry.values()]
+                heights = [c["size"][1] for c in self.geometry.values()]
+                assert max(widths)/min(widths) < 1.15 and max(heights)/min(heights) < 1.15
                 self.game.start()
                 before = self.game.ship_slot
                 self.action('hl.dsp.window.swap({direction="l"})')

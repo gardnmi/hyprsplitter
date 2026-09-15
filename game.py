@@ -1,6 +1,7 @@
 """Small independent lessons. Native window observations are the only actions."""
 import random
 from controls import MISSIONS
+from field import SECTORS, DODGES, WARNING, MAX_ROCKS, sector
 
 
 def center(rect):
@@ -35,7 +36,7 @@ class Game:
         self.rocks = {}
         self.pending = []
         self.flashes = {}
-        self.spawn_in = 1.5
+        self.spawn_in = .8
         self.timer = 5.0
         self.cooldown = 0.0
         self.fired_side = None
@@ -84,7 +85,7 @@ class Game:
             return
         x, y, w, h = arena
         cx, cy = center(ship)
-        self.ship_slot = min(2, max(0, int((cy-y)/h*3)))*3 + min(2, max(0, int((cx-x)/w*3)))
+        self.ship_slot = sector(ship, arena)
         mode = ship.get('fullscreen', 0)
         floating = ship.get('floating', False)
         self.valid_ship = not mode and not floating
@@ -127,19 +128,21 @@ class Game:
         return True
 
     def spawn_rocks(self):
-        available = [i for i in range(9) if i not in self.rocks and all(slot != i for _, slot in self.pending)]
-        if not available:
+        available = [i for i in range(SECTORS) if i not in self.rocks and all(slot != i for _, slot in self.pending)]
+        if not available or len(self.rocks) + len(self.pending) >= MAX_ROCKS:
+            self.spawn_in = .3
             return
-        count = min(len(available), self.rng.choice([1, 1, 2, 2, 3]))
+        count = min(len(available), MAX_ROCKS-len(self.rocks)-len(self.pending),
+                    self.rng.choice([1, 2, 3, 4, 5, 6]))
         slots = self.rng.sample(available, count)
         # Every burst asks the pilot to move, with additional randomly placed rocks.
         if self.ship_slot in available and self.ship_slot not in slots:
             slots[0] = self.ship_slot
         together = self.rng.random() < .5
         for slot in slots:
-            delay = 0 if together else self.rng.uniform(0, 1.1)
+            delay = 0 if together else self.rng.uniform(0, .8)
             self.pending.append((delay, slot))
-        self.spawn_in = self.rng.uniform(3.8, 5.2)
+        self.spawn_in = self.rng.uniform(1.2, 2.0)
 
     def advance(self, dt):
         if self.state != 'active' or self.paused:
@@ -163,14 +166,14 @@ class Game:
             pending = []
             for delay, slot in self.pending:
                 if delay <= dt:
-                    self.rocks[slot] = 3.2  # Each appearance gets a full warning.
+                    self.rocks[slot] = WARNING  # Each appearance gets a full warning.
                 else:
                     pending.append((delay-dt, slot))
             self.pending = pending
             self.spawn_in -= dt
             if self.spawn_in <= 0:
                 self.spawn_rocks()
-            if self.progress >= 6 and len(self.visited) == 9:
+            if self.progress >= DODGES and len(self.visited) == SECTORS:
                 self.finish()
         elif self.mission == 'lasers':
             if not self.valid_ship:
@@ -242,7 +245,7 @@ class Game:
 
     def status(self):
         if self.mission == 'asteroids':
-            return f'SECTORS {len(self.visited)}/9   DODGES {min(6,self.progress)}/6'
+            return f'SECTORS {len(self.visited)}/{SECTORS}   DODGES {min(DODGES,self.progress)}/{DODGES}'
         if self.mission == 'lasers':
             return f'GATES {self.progress}/4   SAFE HALF: {self.safe_side.upper()}'
         if self.mission == 'shoot':

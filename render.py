@@ -1,8 +1,9 @@
-"""Procedural vector artwork for the nine native game windows."""
+"""Procedural vector artwork for the native lesson windows."""
 
 import math
 import random
 from controls import MISSIONS
+from field import COLUMNS, SECTORS, sector
 
 BG = (0.025, 0.043, 0.075)
 CYAN = (0.3, 0.94, 0.86)
@@ -97,10 +98,7 @@ def draw_tile(cr, w, h, game, actor, ready, away, t):
     rect = game.geometry.get(actor)
     slot = actor
     if rect:
-        from game import center
-        x,y,aw,ah = game.arena
-        cx,cy = center(rect)
-        slot = min(2,max(0,int((cy-y)/ah*3)))*3 + min(2,max(0,int((cx-x)/aw*3)))
+        slot = sector(rect, game.arena)
     danger = False
     if game.mission == 'asteroids' and game.state == 'active':
         danger = slot in game.rocks or slot in game.flashes
@@ -163,9 +161,9 @@ def draw_tile(cr, w, h, game, actor, ready, away, t):
         ship(cr,w/2,h/2-12,t)
         if game.mission == 'asteroids':
             # Mini chart records travel, without adding a second action.
-            for s in range(9):
+            for s in range(SECTORS):
                 color(cr,CYAN if s in game.visited else MUTED,.7 if s in game.visited else .25)
-                cr.rectangle(22+(s%3)*12,60+(s//3)*12,8,8);cr.fill()
+                cr.rectangle(22+(s%COLUMNS)*9,60+(s//COLUMNS)*9,6,6);cr.fill()
         if game.mission == 'resize' and game.baseline_width:
             target = 1.2 if game.step == 0 else 1
             ratio = rect['size'][0]/game.baseline_width if rect else 1

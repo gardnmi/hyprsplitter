@@ -18,7 +18,7 @@ Super means the Windows key. Your normal desktop bindings remain active.
 
 | Phase | Game | Task |
 | --- | --- | --- |
-| 1 | Asteroid field | Super+Shift+arrows moves the ship through all 9 tiles. Dodge 6 impacts. Random rocks appear alone or in groups, each with a full countdown. |
+| 1 | Asteroid field | Super+Shift+arrows moves the ship through all 24 tiles (6 × 4). Dodge 12 impacts. Overlapping bursts arrive every 1.2–2 seconds, with solo rocks and clusters of up to 6. Each rock gets a 2.6-second countdown; at most 10 sectors are threatened at once. |
 | 2 | Laser gates | Only 2 windows. Super+J rotates the split; Super+Shift+arrows swaps sides. Move to the marked safe half for 4 gates. |
 | 3 | Target practice | Super+arrows selects a red enemy. Super+W closes that actual window and destroys the ship. Close 3 enemies; keep your cyan ship. |
 | 4 | Docking | Super+T undocks. Super+left-drag moves the ship's center onto the beacon. Super+T lands again. |
