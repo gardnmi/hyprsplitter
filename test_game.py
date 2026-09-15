@@ -1,5 +1,5 @@
 import unittest
-from game import Game, side
+from game import Game, side, TARGETS, FRIENDLIES
 from field import COLUMNS, ROWS, SECTORS, DODGES, WARNING, MAX_ROCKS, grid_steps
 from controls import MISSIONS, shortcut_labels
 
@@ -106,10 +106,14 @@ class Lessons(unittest.TestCase):
     def test_focus_does_not_shoot_and_friendly_is_not_a_target(self):
         g=self.game('shoot');g.observe({4:rect(),0:rect(600,0)},ARENA,0)
         g.advance(100)
-        self.assertEqual(len(g.enemies),3)
+        self.assertEqual(len(g.enemies),len(TARGETS))
         self.assertIn('DESTROY',g.instruction())
         self.assertFalse(g.close_target(4))
-        for actor in (0,1,2):
+        for friend in FRIENDLIES:
+            self.assertFalse(g.close_target(friend))
+        g.observe({4:rect(),1:rect(600,0)},ARENA,1)
+        self.assertIn('DO NOT FIRE',g.instruction())
+        for actor in sorted(TARGETS):
             self.assertTrue(g.close_target(actor))
             self.assertFalse(g.close_target(actor))
         self.assertEqual(g.state,'complete')
@@ -118,14 +122,29 @@ class Lessons(unittest.TestCase):
         g=Game('shoot');self.assertFalse(g.close_target(0))
         g.start();g.paused=True;self.assertFalse(g.close_target(0))
 
-    def test_docking_requires_float_movement_to_beacon_and_landing(self):
+    def test_docking_requires_whole_window_inside_bay_then_toggle(self):
         g=self.game('float')
-        g.observe({4:rect(floating=True)},ARENA,4);self.assertEqual(g.step,1)
-        g.observe({4:rect()},ARENA,4);self.assertEqual(g.state,'active')
+        sw,sh=g.docking_ship_size
+        g.observe({4:rect(100,200,sw,sh,True)},ARENA,4)
+        self.assertEqual(g.step,1)
+        self.assertIn('RIGHT',g.instruction())
+        dx,dy,dw,dh=g.dock_rect
+        # Center near the target is insufficient if an edge is still outside.
+        g.observe({4:rect(dx-10,dy+20,sw,sh,True)},ARENA,4)
+        self.assertEqual(g.step,1)
+        g.observe({4:rect(dx+30,dy+30,sw,sh,True)},ARENA,4)
+        self.assertEqual(g.step,2)
+        self.assertIn('DOCK NOW',g.instruction())
+        # Drifting back out removes the ready-to-dock state.
+        g.observe({4:rect(100,200,sw,sh,True)},ARENA,4)
+        self.assertEqual(g.step,1)
+        g.observe({4:rect()},ARENA,4)
         self.assertEqual(g.step,0)
-        g.observe({4:rect(floating=True)},ARENA,4)
-        g.observe({4:rect(700,300,400,300,True)},ARENA,4);self.assertEqual(g.step,2)
-        g.observe({4:rect()},ARENA,4);self.assertEqual(g.state,'complete')
+        self.assertEqual(g.state,'active')
+        g.observe({4:rect(100,200,sw,sh,True)},ARENA,4)
+        g.observe({4:rect(dx+30,dy+30,sw,sh,True)},ARENA,4)
+        g.observe({4:rect()},ARENA,4)
+        self.assertEqual(g.state,'complete')
 
     def test_resize_requires_width_then_restoration_and_rejects_fullscreen(self):
         g=self.game('resize')
@@ -133,14 +152,40 @@ class Lessons(unittest.TestCase):
         g.observe({4:rect(w=740)},ARENA,4);g.advance(.7);self.assertEqual(g.step,1)
         g.observe({4:rect(w=600)},ARENA,4);g.advance(.7);self.assertEqual(g.state,'complete')
 
-    def test_fullscreen_and_maximize_are_distinct_and_require_return(self):
-        for name,mode in [('fullscreen',2),('maximize',1)]:
-            g=self.game(name)
-            g.observe({4:rect(mode=3-mode)},ARENA,4);self.assertEqual(g.step,0)
-            self.assertIn('EXIT THIS MODE',g.instruction())
-            g.observe({4:rect(mode=mode)},ARENA,4);self.assertEqual(g.step,1)
-            self.assertEqual(g.state,'active')
-            g.observe({4:rect()},ARENA,4);self.assertEqual(g.state,'complete')
+    def test_invasion_requires_charge_then_maximize_then_animation(self):
+        g=self.game('invasion')
+        g.observe({4:rect(mode=1)},ARENA,4)
+        self.assertEqual(g.step,0)
+        g.observe({4:rect(mode=2)},ARENA,4)
+        g.advance(1)
+        self.assertEqual(g.step,1)
+        self.assertAlmostEqual(g.charge,.4)
+        g.observe({4:rect(mode=1)},ARENA,4)
+        self.assertEqual((g.step,g.charge),(0,0))
+        g.observe({4:rect(mode=2)},ARENA,4)
+        g.advance(2.5)
+        self.assertEqual((g.step,g.charge),(2,1))
+        self.assertIn('RELEASE',g.instruction())
+        g.observe({4:rect(mode=0)},ARENA,4)
+        self.assertEqual(g.step,2)
+        g.observe({4:rect(mode=1)},ARENA,4)
+        self.assertEqual(g.step,3)
+        self.assertEqual(g.state,'active')
+        g.advance(1)
+        self.assertEqual(g.state,'active')
+        g.advance(2)
+        self.assertEqual(g.state,'complete')
+
+    def test_invasion_pause_freezes_charge_and_animation(self):
+        g=self.game('invasion')
+        g.observe({4:rect(mode=2)},ARENA,4)
+        g.paused=True;g.advance(10)
+        self.assertEqual(g.charge,0)
+        g.paused=False;g.advance(2.5)
+        g.observe({4:rect(mode=1)},ARENA,4)
+        g.paused=True;g.advance(10)
+        self.assertEqual(g.blast,0)
+        self.assertEqual(g.state,'active')
 
     def test_fullscreen_labels_follow_installed_custom_bindings(self):
         labels=shortcut_labels([{'description':'Full screen','modmask':72,'key':'F'},

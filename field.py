@@ -14,15 +14,15 @@ def sector(rect, arena):
     return min(ROWS-1, max(0, int((cy-y)/h*ROWS)))*COLUMNS + min(COLUMNS-1, max(0, int((cx-x)/w*COLUMNS)))
 
 
-def grid_steps():
+def grid_steps(columns=COLUMNS, rows=ROWS):
     # Keep actor 4 as the pilot, starting near the center of the larger board.
-    middle = (ROWS//2)*COLUMNS + COLUMNS//2
+    middle = (rows//2)*columns + columns//2
     def actor(slot):
         return middle if slot == 4 else 4 if slot == middle else slot
     steps = [(actor(0), None, None, None)]
-    for col in range(1, COLUMNS):
-        steps.append((actor(col), actor(col-1), 'r', 2/(COLUMNS-col+1)))
-    for col in range(COLUMNS):
-        for row in range(1, ROWS):
-            steps.append((actor(row*COLUMNS+col), actor((row-1)*COLUMNS+col), 'd', 2/(ROWS-row+1)))
+    for col in range(1, columns):
+        steps.append((actor(col), actor(col-1), 'r', 2/(columns-col+1)))
+    for col in range(columns):
+        for row in range(1, rows):
+            steps.append((actor(row*columns+col), actor((row-1)*columns+col), 'd', 2/(rows-row+1)))
     return steps

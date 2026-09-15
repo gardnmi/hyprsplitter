@@ -26,9 +26,8 @@ def shortcut_labels(bindings):
 MISSIONS = [
     ("asteroids", "01 / ASTEROID FIELD", "Move your ship through a 24-sector asteroid field.", "{move} to move your ship", "Visit 24 sectors and dodge 12 asteroid impacts."),
     ("lasers", "02 / LASER GATES", "Two windows. Get your ship into the safe half.", "{split} rotates / {move} swaps", "Clear 4 gates. Each miss retries the same gate."),
-    ("shoot", "03 / TARGET PRACTICE", "Focus a red ship, then close its window.", "{focus} to aim / {close} to fire", "Close all 3 red ships. Keep the cyan ship."),
-    ("float", "04 / DOCKING", "Undock, fly to the beacon, then land.", "{float} to float / {drag} to fly", "Follow one docking instruction at a time."),
+    ("shoot", "03 / TARGET PRACTICE", "Destroy 10 red ships. Protect the 5 green friendlies.", "{focus} to aim / {close} to fire", "Red = enemy. Green = friendly. Check before firing."),
+    ("float", "04 / DOCKING", "Park your ship window inside the green docking bay.", "{float} to undock / {drag} to steer", "When the bay says ALIGNED, press {float} to dock."),
     ("resize", "05 / CARGO BAY", "Widen your ship, then return it to cruising size.", "{resize} changes width", "Match the marked width. No time limit."),
-    ("fullscreen", "06 / DEEP SPACE SCAN", "Open your ship fullscreen, then return to tiling.", "{fullscreen} toggles fullscreen", "Complete one scan. No time limit."),
-    ("maximize", "07 / PANORAMA", "Maximize your ship, then return to tiling.", "{maximize} toggles maximize", "Keep the desktop bar visible during the panorama."),
+    ("invasion", "06 / SECRET WEAPON", "A massive invasion is approaching. Charge the weapon.", "{fullscreen} charges / {maximize} releases", "Wait for CHARGED, then release the blast."),
 ]

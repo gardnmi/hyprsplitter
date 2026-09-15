@@ -10,7 +10,7 @@ import sys
 import time
 import traceback
 
-from game import Game
+from game import Game, TARGETS, FRIENDLIES
 from field import grid_steps, SECTORS, sector
 from controls import MISSIONS, shortcut_labels
 
@@ -111,10 +111,11 @@ def main():
             self.addresses.clear()
             self.geometry.clear()
             self.arena = None
+            self.dock_prepared = False
             if self.game.mission == 'asteroids':
                 steps = grid_steps()
             elif self.game.mission == 'shoot':
-                steps = [(4,None,None,None),(0,4,'r',1),(1,4,'d',1),(2,0,'d',1)]
+                steps = grid_steps(4, 4)
             else:
                 steps = [(4,None,None,None),(0,4,'r',1)]
             self.steps = iter(steps)
@@ -189,10 +190,12 @@ def main():
             self.addresses.pop(actor, None)
             self.ready = False
             mission = self.game.mission
+            hit_friendly = actor in self.game.friendlies
             def retry():
                 if not self.closing:
                     self.game.load(mission)
-                    self.game.say('CYAN IS YOUR SHIP / CLOSE ONLY RED TARGETS' if mission == 'shoot' else 'WINDOW CLOSED / LET US TRY AGAIN')
+                    self.game.say('FRIENDLY HIT / GREEN SHIPS MUST SURVIVE / TRY AGAIN' if hit_friendly else
+                                  'CYAN IS YOUR SHIP / CLOSE ONLY RED TARGETS' if mission == 'shoot' else 'WINDOW CLOSED / LET US TRY AGAIN')
                     self.build()
                 return False
             GLib.idle_add(lambda: self.guarded(retry))
@@ -214,6 +217,19 @@ def main():
                 right = max(c['at'][0]+c['size'][0] for c in self.geometry.values())
                 bottom = max(c['at'][1]+c['size'][1] for c in self.geometry.values())
                 self.arena = x,y,right-x,bottom-y
+            if self.game.mission == 'float' and self.game.state == 'active':
+                craft = self.geometry[4]
+                if craft['floating'] and not craft.get('fullscreen') and not self.dock_prepared:
+                    self.dock_prepared = True
+                    self.game.arena = self.arena
+                    w,h = self.game.docking_ship_size
+                    x,y,aw,ah = self.arena
+                    hypr.run(f'hl.dsp.window.resize({{window={self.selector(4)}, x={int(w)}, y={int(h)}}})',
+                             f'hl.dsp.window.move({{window={self.selector(4)}, x={int(x+aw*.25-w/2)}, y={int(y+ah*.5-h/2)}}})')
+                    by_address = {c['address']:c for c in hypr.request('clients',True)}
+                    self.geometry = {i:by_address[a] for i,a in self.addresses.items()}
+                elif not craft['floating']:
+                    self.dock_prepared = False
             focused = next((i for i,c in self.geometry.items() if c.get('focusHistoryID') == 0), None)
             self.away = hypr.request('activeworkspace', True)['id'] != self.workspace or focused is None
             # Do not award progress while the user is away from the lesson.
@@ -241,7 +257,7 @@ def main():
                     elif key == 'r':
                         self.game.load(self.game.mission)
                         self.build()
-                    elif key in '1234567' and len(key) == 1:
+                    elif key in '123456' and len(key) == 1:
                         self.game.load(MISSIONS[int(key)-1][0])
                         self.build()
                 return True
@@ -304,26 +320,28 @@ def main():
                 assert 'DESTROY' in self.game.instruction()
                 hypr.run(f'hl.dsp.window.close({{window={self.selector(0)}}})')
             elif stage == 3:
-                assert len(self.windows) == 3 and 0 not in self.game.enemies
-                hypr.run(f'hl.dsp.window.close({{window={self.selector(1)}}})')
+                assert len(self.windows) == 15 and 0 not in self.game.enemies
+                hypr.focus(self.addresses[1]); self.sync()
+                assert 'DO NOT FIRE' in self.game.instruction()
+                hypr.run(*(f'hl.dsp.window.close({{window={self.selector(actor)}}})' for actor in sorted(self.game.enemies)))
             elif stage == 4:
-                assert len(self.windows) == 2
-                hypr.run(f'hl.dsp.window.close({{window={self.selector(2)}}})')
+                assert self.game.state == 'complete'
+                assert set(self.windows) == FRIENDLIES | {4}
+                print('PASS ten real enemy closes; five friendlies preserved', flush=True)
             elif stage == 5:
-                assert self.game.state == 'complete' and len(self.windows) == 1
-                print('PASS native focus, three real target closes, and completion', flush=True)
                 self.game.load('float'); self.build()
             elif stage == 6:
                 self.game.start()
                 self.action(f'hl.dsp.window.float({{window={self.selector(4)}, action="on"}})')
                 assert self.game.step == 1
-                bx,by = self.game.beacon
+                dx,dy,dw,dh = self.game.dock_rect
+                bx,by = dx+dw/2,dy+dh/2
                 w,h = self.geometry[4]['size']
                 self.action(f'hl.dsp.window.move({{window={self.selector(4)}, x={int(bx-w/2)}, y={int(by-h/2)}}})')
                 assert self.game.step == 2
                 self.action(f'hl.dsp.window.float({{window={self.selector(4)}, action="off"}})')
                 assert self.game.state == 'complete'
-                print('PASS native undock, beacon, and landing', flush=True)
+                print('PASS compact undock, whole-window docking bay, and landing', flush=True)
                 self.game.load('resize'); self.build()
             elif stage == 7:
                 self.game.start()
@@ -335,25 +353,28 @@ def main():
                 self.game.advance(.7)
                 assert self.game.state == 'complete'
                 print('PASS native cargo width and restoration', flush=True)
-                self.game.load('fullscreen'); self.build()
-            elif stage in (8,9):
+                self.game.load('invasion'); self.build()
+            elif stage == 8:
                 self.game.start()
-                mode = 'fullscreen' if stage == 8 else 'maximized'
-                self.action(f'hl.dsp.window.fullscreen({{window={self.selector(4)}, mode="{mode}", action="set"}})')
+                self.action(f'hl.dsp.window.fullscreen({{window={self.selector(4)}, mode="fullscreen"}})')
                 assert self.game.step == 1
-                self.action(f'hl.dsp.window.fullscreen({{window={self.selector(4)}, mode="{mode}", action="unset"}})')
+                self.game.advance(2.6)
+                assert self.game.step == 2 and self.game.charge == 1
+                self.action(f'hl.dsp.window.fullscreen({{window={self.selector(4)}, mode="maximized"}})')
+                assert self.game.step == 3 and self.geometry[4]['fullscreen'] == 1
+                print('PASS fullscreen charge and native maximize release', flush=True)
+            elif stage == 9:
+                self.game.advance(3.1)
                 assert self.game.state == 'complete'
-                print(f'PASS native {mode} and return', flush=True)
-                self.game.load('maximize' if stage == 8 else 'shoot'); self.build()
+                print('PASS weapon animation completes invasion mission', flush=True)
+                self.game.load('shoot'); self.build()
             elif stage == 10:
-                # Closing the friendly really closes that window, then restores
-                # the exercise with an explanation instead of crashing the board.
                 self.game.start()
-                hypr.run(f'hl.dsp.window.close({{window={self.selector(4)}}})')
+                hypr.run(f'hl.dsp.window.close({{window={self.selector(1)}}})')
             else:
-                assert self.game.state == 'briefing' and len(self.windows) == 4
-                assert 'CYAN' in self.game.feedback
-                print('PASS accidental friendly close recovery', flush=True)
+                assert self.game.state == 'briefing' and len(self.windows) == 16
+                assert 'FRIENDLY HIT' in self.game.feedback
+                print('PASS friendly-fire retry and explanation', flush=True)
                 self.close()
             self.smoke_stage += 1
 

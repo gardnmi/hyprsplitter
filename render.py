@@ -11,6 +11,7 @@ WHITE = (0.87, 0.93, 1)
 MUTED = (0.37, 0.48, 0.62)
 RED = (1, 0.28, 0.35)
 AMBER = (1, 0.70, 0.29)
+GREEN = (.38, .95, .47)
 STARS = [(random.Random(i).random(), random.Random(i + 500).random(), 0.5 + i % 3 * .4) for i in range(48)]
 
 
@@ -84,6 +85,49 @@ def fitted(cr, message, x, y, width, size=15, tint=WHITE):
     text(cr, message, x, y, min(size, size*width/max(1,extent)), tint, True)
 
 
+def invasion(cr,w,h,game,t,pilot):
+    origin = (w/2,h/2-12)
+    radius = game.blast*max(w,h)/1.8 if game.step == 3 else 0
+    destroyed = game.state == 'complete'
+    # The fleet is visible inside the ship too, so fullscreen retains the threat.
+    for row in range(4):
+        for col in range(8):
+            ex = w*(.1+col*.8/7)
+            ey = 120+row*max(18,(h*.35-120)/4)+math.sin(t*.8+col)*5
+            distance = math.hypot(ex-origin[0],ey-origin[1])
+            if destroyed:
+                continue
+            if radius > distance:
+                age = (radius-distance)/max(w,h)
+                for spark in range(6):
+                    angle = spark*math.tau/6+col
+                    length = 8+age*120
+                    line(cr,[(ex+math.cos(angle)*length,ey+math.sin(angle)*length),
+                             (ex+math.cos(angle)*(length+8),ey+math.sin(angle)*(length+8))],
+                         AMBER,2,max(0,1-age*3))
+            else:
+                cr.save();cr.translate(ex,ey);cr.scale(.65,.65)
+                enemy(cr,0,0,RED);cr.restore()
+    if pilot and game.state == 'active':
+        fitted(cr,'MASSIVE INVASION INBOUND' if game.step < 3 else 'SECRET WEAPON / SHOCKWAVE',w/2,75,w-40,20,RED if game.step < 3 else CYAN)
+        barw=min(w-80,520)
+        color(cr,MUTED,.3);cr.rectangle(w/2-barw/2,90,barw,7);cr.fill()
+        color(cr,CYAN,.95);cr.rectangle(w/2-barw/2,90,barw*game.charge,7);cr.fill()
+        if game.step in (1,2):
+            for ring in range(3):
+                color(cr,CYAN,.15+game.charge*.25);cr.set_line_width(2+game.charge*2)
+                cr.arc(*origin,80+ring*17,-t*.6+ring,-t*.6+ring+math.tau*game.charge);cr.stroke()
+            for particle in range(16):
+                angle=particle*math.tau/16+t*.3
+                dist=85+(1-(t*.7+particle/16)%1)*100
+                color(cr,CYAN,.65);cr.arc(origin[0]+math.cos(angle)*dist,origin[1]+math.sin(angle)*dist,2,0,math.tau);cr.fill()
+        if game.step == 3:
+            for offset,width,alpha in [(0,28,.12),(0,5,.9),(-35,2,.35)]:
+                color(cr,CYAN,alpha);cr.set_line_width(width)
+                cr.arc(*origin,max(0,radius+offset),0,math.tau);cr.stroke()
+            color(cr,CYAN,max(0,.15-game.blast*.05));cr.paint()
+
+
 def draw_tile(cr, w, h, game, actor, ready, away, t):
     color(cr, BG); cr.paint()
     scale = min(w/480, h/320, 1.5)
@@ -95,6 +139,7 @@ def draw_tile(cr, w, h, game, actor, ready, away, t):
     mission = MISSIONS[game.index]
     pilot = actor == 4
     selected = actor == game.focused
+    friendly = actor in game.friendlies
     rect = game.geometry.get(actor)
     slot = actor
     if rect:
@@ -141,21 +186,32 @@ def draw_tile(cr, w, h, game, actor, ready, away, t):
         sx,sy,sw,sh = {'top':(0,0,1,.5),'bottom':(0,.5,1,.5),'left':(0,0,.5,1),'right':(.5,0,.5,1)}[safe]
         color(cr,CYAN,.85);cr.rectangle(mx+sx*mw,my+sy*mh,sw*mw,sh*mh);cr.fill()
     elif game.mission == 'float' and not pilot and rect:
-        bx,by = game.beacon
+        dx,dy,dw,dh = game.dock_rect
         rx,ry = rect['at'];rw,rh = rect['size']
-        bx,by = (bx-rx)/rw*w,(by-ry)/rh*h
-        color(cr,CYAN,.7);cr.set_line_width(2)
-        cr.arc(bx,by,42,0,math.tau);cr.stroke()
-        line(cr,[(bx-55,by),(bx+55,by)],CYAN,1,.5)
-        line(cr,[(bx,by-55),(bx,by+55)],CYAN,1,.5)
-        fitted(cr,'DOCKING BEACON',bx,by+70,min(300,w-40),18,CYAN)
+        dx,dy,dw,dh = (dx-rx)/rw*w,(dy-ry)/rh*h,dw/rw*w,dh/rh*h
+        color(cr,GREEN,.12 if game.step == 2 else .05)
+        cr.rectangle(dx,dy,dw,dh);cr.fill()
+        color(cr,GREEN,.95);cr.set_line_width(4)
+        cr.set_dash([] if game.step == 2 else [12,8])
+        cr.rectangle(dx,dy,dw,dh);cr.stroke();cr.set_dash([])
+        fitted(cr,'ALIGNED / READY TO DOCK' if game.step == 2 else 'PARK YOUR WHOLE WINDOW HERE',
+               dx+dw/2,dy-20,max(100,dw+30),18,GREEN)
+        fitted(cr,f"PRESS {game.controls['float']} TO DOCK" if game.step == 2 else 'GREEN DOCKING BAY',
+               dx+dw/2,dy+dh+32,max(100,dw+30),16,GREEN)
+        if game.step < 2:
+            if not selected:
+                fitted(cr,'HOLD SUPER + LEFT-DRAG YOUR SHIP',w/2,h-35,w-40,17,WHITE)
+            line(cr,[(max(30,dx-150),dy+dh/2),(dx-20,dy+dh/2)],GREEN,3,.8)
+            line(cr,[(dx-40,dy+dh/2-12),(dx-20,dy+dh/2),(dx-40,dy+dh/2+12)],GREEN,3,.8)
+    elif game.mission == 'invasion':
+        invasion(cr,w,h,game,t,pilot)
 
-    heading = 'YOUR SHIP' if pilot else 'ENEMY SHIP' if actor in game.enemies else 'SECTOR '+str(slot+1) if game.mission == 'asteroids' else 'SPACE STATION'
-    text(cr,heading,20,29,13,CYAN if pilot else RED if actor in game.enemies else MUTED)
-    fitted(cr,f'LESSON {game.index+1} / 7',w-92,29,145,12,MUTED)
+    heading = 'YOUR SHIP' if pilot else 'FRIENDLY / DO NOT FIRE' if friendly else 'ENEMY SHIP' if actor in game.enemies else 'SECTOR '+str(slot+1) if game.mission == 'asteroids' else 'SPACE STATION'
+    text(cr,heading,20,29,13,CYAN if pilot else GREEN if friendly else RED if actor in game.enemies else MUTED)
+    fitted(cr,f'LESSON {game.index+1} / {len(MISSIONS)}',w-92,29,145,12,MUTED)
     line(cr,[(20,43),(w-20,43)],MUTED,1,.3)
-    if selected:
-        color(cr,CYAN if actor not in game.enemies else AMBER,.8)
+    if selected or friendly:
+        color(cr,GREEN if friendly else CYAN if actor not in game.enemies else AMBER,.8)
         cr.set_line_width(3);cr.rectangle(4,4,w-8,h-8);cr.stroke()
     if pilot:
         ship(cr,w/2,h/2-12,t)
@@ -164,6 +220,10 @@ def draw_tile(cr, w, h, game, actor, ready, away, t):
             for s in range(SECTORS):
                 color(cr,CYAN if s in game.visited else MUTED,.7 if s in game.visited else .25)
                 cr.rectangle(22+(s%COLUMNS)*9,60+(s//COLUMNS)*9,6,6);cr.fill()
+        if game.mission == 'float' and game.state == 'active':
+            fitted(cr,('PRESS '+game.controls['float']+' TO UNDOCK',
+                       'DRAG '+game.docking_direction(),
+                       'ALIGNED / PRESS '+game.controls['float'])[game.step],w/2,78,w-40,19,CYAN)
         if game.mission == 'resize' and game.baseline_width:
             target = 1.2 if game.step == 0 else 1
             ratio = rect['size'][0]/game.baseline_width if rect else 1
@@ -174,11 +234,19 @@ def draw_tile(cr, w, h, game, actor, ready, away, t):
             line(cr,[(bx,77),(bx,96)],AMBER,3)
             fitted(cr,f'TARGET {target:.0%} / CURRENT {ratio:.0%}',w/2,115,w-50,15,CYAN)
         fitted(cr,game.status(),w/2,h-91,w-40,14,CYAN)
+    elif friendly:
+        color(cr,GREEN,.06);cr.paint()
+        # A shield silhouette distinguishes friendlies beyond color alone.
+        shield=[(w/2-36,h/2-54),(w/2+36,h/2-54),(w/2+30,h/2-7),(w/2,h/2+18),(w/2-30,h/2-7),(w/2-36,h/2-54)]
+        line(cr,shield,GREEN,3)
+        line(cr,[(w/2-15,h/2-23),(w/2-3,h/2-10),(w/2+18,h/2-36)],GREEN,4)
+        fitted(cr,'FRIENDLY / KEEP ALIVE',w/2,h/2+50,w-40,18,GREEN)
+        fitted(cr,'DO NOT CLOSE THIS WINDOW',w/2,h/2+75,w-40,12,GREEN)
     elif actor in game.enemies:
         color(cr,RED,.07);cr.paint()
         cr.save();cr.translate(w/2,h/2-20);cr.scale(2.5,2.5);enemy(cr,0,0,RED);cr.restore()
         fitted(cr,'TARGET SELECTED' if selected else 'SELECT THIS SHIP',w/2,h/2+52,w-40,18,AMBER if selected else RED)
-    elif game.mission not in ('asteroids','lasers','float'):
+    elif game.mission not in ('asteroids','lasers','float','invasion'):
         fitted(cr,'TRAINING STATION',w/2,h/2,w-40,20,MUTED)
 
     show_card = pilot and (not ready or game.state != 'active' or away or game.paused)
@@ -187,14 +255,14 @@ def draw_tile(cr, w, h, game, actor, ready, away, t):
         if not ready:
             title, detail, key, note = 'PREPARING LESSON', 'Arranging your windows...', '', ''
         elif game.state == 'complete':
-            title = 'LESSON COMPLETE' if game.index < 6 else 'FLIGHT SCHOOL COMPLETE'
+            title = 'LESSON COMPLETE' if game.index < len(MISSIONS)-1 else 'FLIGHT SCHOOL COMPLETE'
             detail = mission[1]
-            key = 'SPACE / NEXT LESSON' if game.index < 6 else '1-7 / REVISIT A LESSON'
+            key = 'SPACE / NEXT LESSON' if game.index < len(MISSIONS)-1 else '1-6 / REVISIT A LESSON'
             note = 'R to practice again'
         elif away or game.paused:
             title,detail,key,note = 'PAUSED', 'Take your time.', 'SPACE / RESUME' if game.paused else 'RETURN TO THE LESSON', ''
         else:
-            title,detail,key,note = mission[1],mission[2],mission[3].format(**game.controls),mission[4]
+            title,detail,key,note = mission[1],mission[2],mission[3].format(**game.controls),mission[4].format(**game.controls)
         fitted(cr,title,w/2,h/2-64,w-40,23,CYAN)
         fitted(cr,detail,w/2,h/2-26,w-40,15)
         fitted(cr,key,w/2,h/2+12,w-40,17,CYAN)
@@ -207,4 +275,4 @@ def draw_tile(cr, w, h, game, actor, ready, away, t):
         if game.state == 'active' and (pilot or selected or actor in game.enemies):
             fitted(cr,game.instruction() if selected or pilot else f"{game.controls['focus']} / SELECT A RED SHIP",w/2,h-43,w-36,16,CYAN)
     if pilot or selected:
-        fitted(cr,'SPACE pause   R retry   1-7 lessons   ESC quit',w/2,h-17,w-32,10,MUTED)
+        fitted(cr,'SPACE pause   R retry   1-6 lessons   ESC quit',w/2,h-17,w-32,10,MUTED)

@@ -3,6 +3,9 @@ import random
 from controls import MISSIONS
 from field import SECTORS, DODGES, WARNING, MAX_ROCKS, sector
 
+FRIENDLIES = {1, 5, 8, 11, 14}
+TARGETS = set(range(16)) - FRIENDLIES - {4}
+
 
 def center(rect):
     return tuple(rect['at'][i] + rect['size'][i]/2 for i in (0, 1))
@@ -42,14 +45,16 @@ class Game:
         self.fired_side = None
         self.feedback = ''
         self.feedback_time = 0
-        self.enemies = {0, 1, 2} if mission == 'shoot' else set()
+        self.enemies = TARGETS.copy() if mission == 'shoot' else set()
+        self.friendlies = FRIENDLIES.copy() if mission == 'shoot' else set()
         self.focused = 4
         self.ship_slot = 4
         self.geometry = {}
         self.arena = (0, 0, 1, 1)
         self.baseline_width = None
-        self.floating_origin = None
         self.hold = 0
+        self.charge = 0.0
+        self.blast = 0.0
         self.valid_ship = True
 
     def start(self):
@@ -74,9 +79,32 @@ class Game:
         return ('top', 'right', 'bottom', 'left')[min(self.progress, 3)]
 
     @property
-    def beacon(self):
+    def docking_ship_size(self):
+        return min(440, self.arena[2]*.24), min(300, self.arena[3]*.34)
+
+    @property
+    def dock_rect(self):
         x, y, w, h = self.arena
-        return x+w*.75, y+h*.5
+        sw, sh = self.docking_ship_size
+        dw, dh = sw+100, sh+100
+        return x+w*.75-dw/2, y+h*.5-dh/2, dw, dh
+
+    def in_dock(self, ship):
+        x,y,w,h = self.dock_rect
+        sx,sy = ship['at']; sw,sh = ship['size']
+        return sx >= x and sy >= y and sx+sw <= x+w and sy+sh <= y+h
+
+    def docking_direction(self):
+        ship = self.geometry.get(4)
+        if not ship:
+            return 'TOWARD THE GREEN BAY'
+        x,y,w,h = self.dock_rect
+        cx,cy = center(ship)
+        dx,dy = x+w/2-cx,y+h/2-cy
+        directions = []
+        if abs(dx)>25: directions.append('RIGHT' if dx>0 else 'LEFT')
+        if abs(dy)>25: directions.append('DOWN' if dy>0 else 'UP')
+        return ' + '.join(directions) or 'INTO THE GREEN BAY'
 
     def observe(self, geometry, arena, focused):
         self.geometry, self.arena, self.focused = geometry, arena, focused
@@ -96,26 +124,25 @@ class Game:
         elif self.mission == 'float':
             if self.step == 0 and floating and not mode:
                 self.step = 1
-                self.floating_origin = center(ship)
-                self.say('UNDOCKED / FLY TO THE BEACON')
-            elif self.step == 1 and floating and not mode:
-                bx, by = self.beacon
-                moved = self.floating_origin and sum((a-b)**2 for a,b in zip(center(ship), self.floating_origin)) > 40**2
-                if moved and abs(cx-bx) < w*.09 and abs(cy-by) < h*.12:
-                    self.step = 2
-                    self.say('BEACON REACHED / RETURN TO TILING')
+                self.say('UNDOCKED / DRAG YOUR WINDOW INTO THE GREEN BAY')
+            elif self.step in (1,2) and floating and not mode:
+                self.step = 2 if self.in_dock(ship) else 1
             elif self.step == 1 and not floating and not mode:
                 self.step = 0
-                self.say('LANDED EARLY / UNDOCK TO TRY AGAIN')
+                self.say('OUTSIDE THE BAY / UNDOCK AND TRY AGAIN')
             elif self.step == 2 and not floating and not mode:
                 self.finish()
-        elif self.mission in ('fullscreen', 'maximize'):
-            expected = 2 if self.mission == 'fullscreen' else 1
-            if self.step == 0 and mode == expected:
+        elif self.mission == 'invasion':
+            if self.step == 0 and mode == 2:
                 self.step = 1
-                self.say('SCAN COMPLETE / TOGGLE AGAIN TO RETURN')
-            elif self.step == 1 and mode == 0:
-                self.finish()
+            elif self.step == 1 and mode != 2:
+                self.charge = 0
+                self.step = 0
+                self.say('CHARGE INTERRUPTED / HOLD FULLSCREEN UNTIL CHARGED')
+            elif self.step == 2 and mode == 1:
+                self.step = 3
+                self.blast = 0
+                self.say('SECRET WEAPON RELEASED')
 
     def close_target(self, actor):
         if self.mission != 'shoot' or self.state != 'active' or self.paused or actor not in self.enemies:
@@ -193,6 +220,16 @@ class Game:
                     self.say('LASER HIT / TRY THIS GATE AGAIN')
                 self.cooldown = 2.0
                 self.timer = 5.0
+        elif self.mission == 'invasion':
+            if self.step == 1 and self.geometry.get(4, {}).get('fullscreen') == 2:
+                self.charge = min(1, self.charge+dt/2.5)
+                if self.charge >= 1:
+                    self.step = 2
+                    self.say('WEAPON CHARGED / READY TO RELEASE')
+            elif self.step == 3:
+                self.blast += dt
+                if self.blast >= 3:
+                    self.finish()
         elif self.mission == 'resize' and self.baseline_width:
             ship = self.geometry.get(4)
             ratio = ship['size'][0]/self.baseline_width if ship else 0
@@ -229,19 +266,25 @@ class Game:
             direction = {'top':'up', 'bottom':'down'}.get(goal, goal)
             return f"{c.get('move_'+direction, 'Super+Shift+'+direction.upper())} / SWAP TO {goal.upper()}"
         if self.mission == 'shoot':
+            if self.focused in self.friendlies:
+                return f"FRIENDLY / DO NOT FIRE / {c['focus']} NEXT TARGET"
             if self.focused in self.enemies:
                 return f"{c['close']} / DESTROY SELECTED SHIP"
             return f"{c['focus']} / SELECT A RED SHIP"
         if self.mission == 'float':
-            return (f"{c['float']} / UNDOCK", f"{c['drag']} / CENTER SHIP ON BEACON", f"{c['float']} / LAND BACK IN TILING")[self.step]
+            mode = ship.get('fullscreen',0) if ship else 0
+            if mode:
+                key = c['fullscreen'] if mode == 2 else c['maximize']
+                return f'{key} / EXIT THIS MODE TO DOCK'
+            return (f"{c['float']} / UNDOCK YOUR SHIP",
+                    f"{c['drag']} / DRAG {self.docking_direction()}",
+                    f"{c['float']} / ALIGNED! DOCK NOW")[self.step]
         if self.mission == 'resize':
             return f"{c['resize']} / " + ('WIDEN TO 120%' if self.step == 0 else 'RETURN TO 100%')
-        mode = ship.get('fullscreen', 0) if ship else 0
-        expected = 2 if self.mission == 'fullscreen' else 1
-        if mode and mode != expected:
-            key = c['fullscreen'] if mode == 2 else c['maximize']
-            return f'{key} / EXIT THIS MODE FIRST'
-        return f"{c[self.mission]} / " + ('BEGIN SCAN' if self.step == 0 else 'RETURN TO TILING')
+        return (f"{c['fullscreen']} / CHARGE SECRET WEAPON",
+                'CHARGING / STAY FULLSCREEN',
+                f"{c['maximize']} / RELEASE SECRET WEAPON",
+                'SHOCKWAVE / INVASION DESTROYED')[self.step]
 
     def status(self):
         if self.mission == 'asteroids':
@@ -249,7 +292,11 @@ class Game:
         if self.mission == 'lasers':
             return f'GATES {self.progress}/4   SAFE HALF: {self.safe_side.upper()}'
         if self.mission == 'shoot':
-            return f'TARGETS CLOSED {self.progress}/3'
+            return f'ENEMIES {self.progress}/{len(TARGETS)}   PROTECT {len(FRIENDLIES)} FRIENDLIES'
         if self.mission == 'resize' and self.baseline_width and 4 in self.geometry:
             return f"SHIP WIDTH {self.geometry[4]['size'][0]/self.baseline_width:.0%}"
-        return f'STEP {self.step+1}/' + ('3' if self.mission == 'float' else '2')
+        if self.mission == 'float':
+            return ('1 / UNDOCK', '2 / PARK IN GREEN BAY', '3 / DOCK')[self.step]
+        if self.mission == 'invasion':
+            return f'WEAPON CHARGE {self.charge:.0%}' if self.step < 3 else 'FLEET ELIMINATED'
+        return f'STEP {self.step+1}/2'
