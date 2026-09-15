@@ -1,8 +1,41 @@
 # Hyprsplitter
 
-A spaceship flight school for **real Omarchy / Hyprland shortcuts**.
+**Omarchy only.** A spaceship flight school for real Omarchy window shortcuts.
+This prototype is built and supported for Omarchy with Hyprland's Lua API
+(tested on Hyprland 0.56.2). Other desktops and standalone Hyprland setups
+are not supported.
 Each lesson is a separate small game with one objective and its own board.
 The windows really move, rotate, resize, float, fullscreen, and close.
+
+
+## Gameplay
+
+![Hyprsplitter gameplay: dodge asteroids, identify enemy ships, and unleash the secret weapon](docs/gameplay.gif)
+
+## Install on Omarchy
+
+Open a terminal in your Omarchy desktop and run:
+
+```sh
+omarchy pkg add git python python-gobject python-cairo gtk3
+git clone https://github.com/gardnmi/hyprsplitter.git
+cd hyprsplitter
+./play
+```
+
+The package command asks for your password if dependencies need installing.
+Run the game as your normal user. No Python virtual environment or pip install
+is needed; `play` uses Omarchy's system Python and GTK packages.
+
+To update an existing checkout:
+
+```sh
+cd hyprsplitter
+git pull --ff-only
+./play
+```
+
+## Choose a lesson
 
 ```sh
 ./play
@@ -44,7 +77,7 @@ early resets the charge. Native actions work even if their shortcuts are customi
 
 ## Requirements
 
-- A running Hyprland session with the Lua dispatcher API (tested on 0.56.2)
+- Omarchy running Hyprland with the Lua dispatcher API (tested on 0.56.2)
 - Dwindle layout with `preserve_split` and `use_active_for_splits` enabled
 - Python 3, PyGObject, GTK 3, and Cairo
 
