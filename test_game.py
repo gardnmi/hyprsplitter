@@ -1,82 +1,139 @@
 import unittest
+from game import Game, side
+from controls import MISSIONS, shortcut_labels
 
-from game import Game
+ARENA = (0, 0, 1200, 900)
+def rect(x=0,y=0,w=600,h=900,floating=False,mode=0):
+    return {'at':[x,y], 'size':[w,h], 'floating':floating, 'fullscreen':mode}
 
+class Lessons(unittest.TestCase):
+    def game(self, mission):
+        g = Game(mission, seed=12)
+        g.controls = shortcut_labels([])
+        g.observe({4:rect()}, ARENA, 4)
+        g.start()
+        return g
 
-class GameTests(unittest.TestCase):
-    def test_edges_do_not_wrap(self):
-        game = Game(1, training=False)
-        game.ship = 0
-        self.assertIsNone(game.neighbor("left"))
-        self.assertIsNone(game.neighbor("up"))
-        self.assertEqual(game.neighbor("right"), 1)
-        self.assertEqual(game.neighbor("down"), 3)
+    def test_every_lesson_starts_with_a_briefing(self):
+        for mission in MISSIONS:
+            g = Game(mission[0])
+            g.advance(100)
+            self.assertEqual(g.state,'briefing')
+            self.assertFalse(g.rocks)
 
-    def test_warning_is_safe_and_impact_damages_only_once(self):
-        game = Game(1, training=False)
-        game.start()
-        game.ship = next(iter(game.hazards))
-        game.advance(game.remaining / 2)
-        self.assertEqual(game.shields, 3)
-        game.advance(game.remaining)
-        self.assertEqual(game.shields, 2)
-        game.advance(.1)
-        self.assertEqual(game.shields, 2)
+    def test_lessons_reset_all_other_mechanics(self):
+        g = self.game('asteroids');g.spawn_rocks()
+        for mission in MISSIONS[1:]:
+            g.load(mission[0]);g.start();g.advance(1)
+            self.assertFalse(g.rocks)
+            self.assertFalse(g.pending)
+            self.assertEqual(bool(g.enemies), mission[0]=='shoot')
 
-    def test_dodge_scores_and_pause_freezes_time(self):
-        game = Game(2, training=False)
-        game.start()
-        game.ship = next(i for i in range(9) if i not in game.hazards)
-        game.paused = True
-        before = game.remaining
-        game.advance(20)
-        self.assertEqual(game.remaining, before)
-        game.paused = False
-        game.advance(before)
-        self.assertEqual(game.score, 100)
-        self.assertEqual(game.shields, 3)
+    def test_asteroids_require_both_travel_and_dodges(self):
+        g = self.game('asteroids');g.progress=6
+        g.advance(.1);self.assertEqual(g.state,'active')
+        for y in range(3):
+            for x in range(3):
+                g.observe({4:rect(x*400,y*300,400,300)},ARENA,4)
+        g.advance(.1);self.assertEqual(g.state,'complete')
+        self.assertFalse(g.rocks)
 
-    def test_three_hits_end_game_and_restart_resets(self):
-        game = Game(3, training=False)
-        game.start()
-        for _ in range(3):
-            if game.kind == "asteroid":
-                game.next_wave()  # Exercise shield depletion with synchronized lasers.
-            game.ship = next(iter(game.hazards))
-            game.advance(game.remaining)
-            game.advance(game.remaining)
-            if game.phase != "over":
-                game.advance(game.remaining)
-        self.assertEqual(game.phase, "over")
-        game.restart()
-        self.assertEqual((game.phase, game.shields, game.score), ("ready", 3, 0))
+    def test_asteroid_hit_does_not_count_as_a_dodge(self):
+        g = self.game('asteroids');g.rocks={g.ship_slot:.1}
+        g.advance(.2)
+        self.assertEqual(g.progress,0)
+        self.assertIn('HIT',g.feedback)
+        self.assertEqual(g.state,'active')
 
-    def test_hard_waves_force_a_dodge_but_leave_reachable_safe_tiles(self):
-        game = Game(4, training=False)
+    def test_each_random_arrival_gets_a_full_warning(self):
+        g = self.game('asteroids');g.pending=[(.1,1),(.8,2)]
+        g.advance(.2);self.assertEqual(g.rocks,{1:3.2})
+        g.advance(.7);self.assertEqual(g.rocks[2],3.2)
+        self.assertLess(g.rocks[1],3.2)
+
+    def test_random_bursts_include_solos_clusters_and_staggered_arrivals(self):
+        g=self.game('asteroids');sizes=set();simultaneous=False;staggered=False
         for _ in range(100):
-            game.next_wave()
-            planned = game.hazards | set(game.asteroid_pending)
-            self.assertEqual(len(planned), 6)
-            self.assertIn(game.ship, planned)
-            self.assertGreaterEqual(game.duration, .65)
-            self.assertLessEqual(game.duration, .95)
-            row, col = divmod(game.ship, 3)
-            safe = set(range(9)) - game.hazards
-            self.assertLessEqual(min(abs(row - i//3) + abs(col - i%3) for i in safe), 2)
-            game.ship = game.rng.choice(sorted(safe))
+            g.pending=[];g.spawn_rocks();sizes.add(len(g.pending))
+            self.assertIn(g.ship_slot,[s for _,s in g.pending])
+            if len(g.pending)>1:
+                simultaneous |= len({d for d,_ in g.pending})==1
+                staggered |= len({d for d,_ in g.pending})>1
+        self.assertIn(1,sizes);self.assertTrue(simultaneous and staggered)
 
-    def test_opening_wave_is_hard_after_restart(self):
-        game = Game(5, training=False)
-        for _ in range(2):
-            game.start()
-            self.assertEqual(game.duration, .95)
-            self.assertEqual(len(game.hazards), 6)
-            game.advance(game.remaining)
-            self.assertEqual(game.remaining, .25)
-            game.advance(game.remaining)
-            self.assertEqual(game.remaining, .12)
-            game.restart()
+    def test_pause_and_floating_cannot_advance_asteroid_lesson(self):
+        g=self.game('asteroids');g.rocks={0:2};g.paused=True;g.advance(5)
+        self.assertEqual(g.rocks[0],2)
+        g.paused=False;g.observe({4:rect(floating=True)},ARENA,4);g.advance(5)
+        self.assertEqual(g.rocks[0],2)
+        self.assertIn('RETURN TO TILING',g.instruction())
 
+    def test_laser_wrong_side_retries_same_gate(self):
+        g=self.game('lasers');g.advance(5.1)
+        self.assertEqual(g.progress,0);self.assertIn('TRY',g.feedback)
+        self.assertEqual(g.safe_side,'top')
 
-if __name__ == "__main__":
+    def test_laser_rotation_then_swap_hints_and_all_four_gates(self):
+        g=self.game('lasers')
+        self.assertIn('ROTATE',g.instruction())
+        g.observe({4:rect(0,450,1200,450)},ARENA,4)
+        self.assertIn('SWAP TO TOP',g.instruction())
+        for r in (rect(0,0,1200,450),rect(600,0),rect(0,450,1200,450),rect()):
+            g.cooldown=0;g.observe({4:r},ARENA,4)
+            self.assertIn('SAFE',g.instruction());g.advance(5.1)
+        self.assertEqual(g.state,'complete')
+
+    def test_focus_does_not_shoot_and_friendly_is_not_a_target(self):
+        g=self.game('shoot');g.observe({4:rect(),0:rect(600,0)},ARENA,0)
+        g.advance(100)
+        self.assertEqual(len(g.enemies),3)
+        self.assertIn('DESTROY',g.instruction())
+        self.assertFalse(g.close_target(4))
+        for actor in (0,1,2):
+            self.assertTrue(g.close_target(actor))
+            self.assertFalse(g.close_target(actor))
+        self.assertEqual(g.state,'complete')
+
+    def test_closes_do_not_award_progress_in_briefing_or_pause(self):
+        g=Game('shoot');self.assertFalse(g.close_target(0))
+        g.start();g.paused=True;self.assertFalse(g.close_target(0))
+
+    def test_docking_requires_float_movement_to_beacon_and_landing(self):
+        g=self.game('float')
+        g.observe({4:rect(floating=True)},ARENA,4);self.assertEqual(g.step,1)
+        g.observe({4:rect()},ARENA,4);self.assertEqual(g.state,'active')
+        self.assertEqual(g.step,0)
+        g.observe({4:rect(floating=True)},ARENA,4)
+        g.observe({4:rect(700,300,400,300,True)},ARENA,4);self.assertEqual(g.step,2)
+        g.observe({4:rect()},ARENA,4);self.assertEqual(g.state,'complete')
+
+    def test_resize_requires_width_then_restoration_and_rejects_fullscreen(self):
+        g=self.game('resize')
+        g.observe({4:rect(w=1200,mode=2)},ARENA,4);g.advance(1);self.assertEqual(g.step,0)
+        g.observe({4:rect(w=740)},ARENA,4);g.advance(.7);self.assertEqual(g.step,1)
+        g.observe({4:rect(w=600)},ARENA,4);g.advance(.7);self.assertEqual(g.state,'complete')
+
+    def test_fullscreen_and_maximize_are_distinct_and_require_return(self):
+        for name,mode in [('fullscreen',2),('maximize',1)]:
+            g=self.game(name)
+            g.observe({4:rect(mode=3-mode)},ARENA,4);self.assertEqual(g.step,0)
+            self.assertIn('EXIT THIS MODE',g.instruction())
+            g.observe({4:rect(mode=mode)},ARENA,4);self.assertEqual(g.step,1)
+            self.assertEqual(g.state,'active')
+            g.observe({4:rect()},ARENA,4);self.assertEqual(g.state,'complete')
+
+    def test_fullscreen_labels_follow_installed_custom_bindings(self):
+        labels=shortcut_labels([{'description':'Full screen','modmask':72,'key':'F'},
+                                {'description':'Full width','modmask':64,'key':'F'}])
+        self.assertEqual(labels['fullscreen'],'Super+Alt+F')
+        self.assertEqual(labels['maximize'],'Super+F')
+
+    def test_two_window_side_classification(self):
+        self.assertEqual(side(rect(),ARENA),'left')
+        self.assertEqual(side(rect(600,0),ARENA),'right')
+        self.assertEqual(side(rect(0,0,1200,450),ARENA),'top')
+        self.assertEqual(side(rect(0,450,1200,450),ARENA),'bottom')
+        self.assertIsNone(side(rect(100,100,200,200),ARENA))
+
+if __name__=='__main__':
     unittest.main()

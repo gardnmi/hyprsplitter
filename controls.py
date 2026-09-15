@@ -10,7 +10,9 @@ def shortcut_labels(bindings):
     }
     descriptions = {"Full screen": "fullscreen", "Full width": "maximize",
                     "Toggle window floating/tiling": "float", "Toggle window split": "split",
-                    "Close window": "close"}
+                    "Close window": "close", "Swap window to the left": "move_left",
+                    "Swap window to the right": "move_right", "Swap window up": "move_up",
+                    "Swap window down": "move_down"}
     for binding in bindings:
         action = descriptions.get(binding.get("description"))
         if not action or binding.get("submap") or not binding.get("key"):
@@ -21,17 +23,12 @@ def shortcut_labels(bindings):
     return labels
 
 
-LESSONS = [
-    (1, "move", "01 / MOVE THE WINDOW", "Focus your ship: {focus}", "Swap into the clear lane: {move}"),
-    (4, "asteroids", "02 / RANDOM ASTEROIDS", "Rocks appear alone or in small groups.", "Watch each countdown; cleared sectors are safe."),
-    (7, "shoot", "03 / CLEAR A SAFE ROUTE", "Touch an enemy: -1 shield. Shoot UP to destroy it.", "Get below it. A kill clears the route and repairs a shield."),
-    (10, "float", "04 / FLOAT AND LAND", "Toggle floating: {float}", "Fly with {drag}; toggle again to land."),
-    (13, "grow", "05 / RESIZE YOUR SHIP", "Resize: {resize} (Shift changes height)", "A larger ship deals double damage."),
-    (16, "split", "06 / SPLIT ORIENTATION", "Click DEPLOY WING to add a second window.", "{split} rotates the split; {focus} selects a ship."),
-    (19, "fullscreen", "07 / FULLSCREEN", "Fullscreen attack: {fullscreen}", "Maximize: {maximize}. These are different modes."),
-    (22, "boss", "08 / PUT IT TOGETHER", "The boss combines shooting and window abilities.", "Break its armor, fragments, then floating core."),
+MISSIONS = [
+    ("asteroids", "01 / ASTEROID FIELD", "Move your ship through all nine sectors.", "{move} to move your ship", "Visit 9 sectors and dodge 6 asteroid impacts."),
+    ("lasers", "02 / LASER GATES", "Two windows. Get your ship into the safe half.", "{split} rotates / {move} swaps", "Clear 4 gates. Each miss retries the same gate."),
+    ("shoot", "03 / TARGET PRACTICE", "Focus a red ship, then close its window.", "{focus} to aim / {close} to fire", "Close all 3 red ships. Keep the cyan ship."),
+    ("float", "04 / DOCKING", "Undock, fly to the beacon, then land.", "{float} to float / {drag} to fly", "Follow one docking instruction at a time."),
+    ("resize", "05 / CARGO BAY", "Widen your ship, then return it to cruising size.", "{resize} changes width", "Match the marked width. No time limit."),
+    ("fullscreen", "06 / DEEP SPACE SCAN", "Open your ship fullscreen, then return to tiling.", "{fullscreen} toggles fullscreen", "Complete one scan. No time limit."),
+    ("maximize", "07 / PANORAMA", "Maximize your ship, then return to tiling.", "{maximize} toggles maximize", "Keep the desktop bar visible during the panorama."),
 ]
-
-
-def lesson_for(wave):
-    return next(lesson for lesson in reversed(LESSONS) if wave >= lesson[0])

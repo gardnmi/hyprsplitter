@@ -1,324 +1,252 @@
-"""Deterministic game rules, independent of GTK and Hyprland."""
-
+"""Small independent lessons. Native window observations are the only actions."""
 import random
-from controls import lesson_for, shortcut_labels
+from controls import MISSIONS
+
+
+def center(rect):
+    return tuple(rect['at'][i] + rect['size'][i]/2 for i in (0, 1))
+
+
+def side(rect, arena):
+    x, y, w, h = arena
+    cx, cy = center(rect)
+    # A two-window split spans one axis of the board.
+    if rect['size'][1] > h*.8:
+        return 'left' if cx < x+w/2 else 'right'
+    if rect['size'][0] > w*.8:
+        return 'top' if cy < y+h/2 else 'bottom'
+    return None
 
 
 class Game:
-    def __init__(self, seed=None, training=True):
+    def __init__(self, mission='asteroids', seed=None):
         self.rng = random.Random(seed)
-        self.training = training
-        self.controls = shortcut_labels([])
-        self.restart()
+        self.controls = {}
+        self.load(mission)
 
-    def restart(self):
-        self.ship = 4
-        self.shields = 3
-        self.score = 0
-        self.wave = 0
-        self.phase = "ready"
-        self.remaining = 0.0
-        self.duration = 1.0
-        self.hazards = set()
-        self.asteroid_timers = {}
-        self.asteroid_pending = {}
-        self.asteroid_delays = {}
-        self.asteroid_flashes = {}
-        self.asteroid_hits = set()
-        self.kind = "laser"
-        self.axis = "row"
+    def load(self, mission):
+        self.mission = mission
+        self.index = next(i for i, item in enumerate(MISSIONS) if item[0] == mission)
+        self.state = 'briefing'
         self.paused = False
-        self.hit = False
-        self.energy = 100.0
-        self.growth = 0.0
-        self.flight = 0.0
-        self.burst = 0.0
-        self.split = False
-        self.wing = None
-        self.boss = 0
-        self.enemies = {0: 3, 2: 3}
-        if self.training:
-            self.enemies = {}
-        self.lesson = "move" if self.training else "arcade"
-        self.shot_cooldown = 0.0
-        self.shot_flash = 0.0
-        self.shot_direction = "up"
-        self.shot_tiles = set()
-        self.aim_hint = "AUTO-FIRE UP / GET BELOW A TARGET"
-        self.locked_target = None
-        self.enemy_flashes = {}
-        self.contact_flash = 0.0
-        self.contact_cooldown = 0.0
-        self.reward_flash = 0.0
-        self.reward_text = ""
-        self.kill_rewards = {}
-        self.message = "USE YOUR NORMAL OMARCHY WINDOW SHORTCUTS"
+        self.progress = 0
+        self.step = 0
+        self.visited = set()
+        self.rocks = {}
+        self.pending = []
+        self.flashes = {}
+        self.spawn_in = 1.5
+        self.timer = 5.0
+        self.cooldown = 0.0
+        self.fired_side = None
+        self.feedback = ''
+        self.feedback_time = 0
+        self.enemies = {0, 1, 2} if mission == 'shoot' else set()
+        self.focused = 4
+        self.ship_slot = 4
+        self.geometry = {}
+        self.arena = (0, 0, 1, 1)
+        self.baseline_width = None
+        self.floating_origin = None
+        self.hold = 0
+        self.valid_ship = True
 
     def start(self):
-        if self.phase == "briefing":
-            self.wave -= 1
-            self.next_wave()
-        elif self.phase == "ready":
-            self.next_wave()
+        if self.state == 'briefing':
+            self.state = 'active'
+            self.visited.add(self.ship_slot)
+            if 4 in self.geometry:
+                self.baseline_width = self.geometry[4]['size'][0]
 
-    def next_wave(self):
-        self.wave += 1
-        if self.training:
-            lesson = lesson_for(self.wave)[1]
-            if lesson != self.lesson:
-                self.lesson = lesson
-                self.phase = "briefing"
-                self.hazards.clear()
-                self.asteroid_timers.clear()
-                self.asteroid_pending.clear()
-                self.asteroid_flashes.clear()
-                self.message = "SPACE WHEN YOU ARE READY"
-                return
-        self.hit = False
-        self.phase = "warning"
-        if self.wave == (22 if self.training else 5) and self.boss == 0:
-            self.boss = 1
-            self.enemies = {0: 18}
-            self.message = "THE WINDOW DEVOURER / BREAK ITS ARMOR"
-        elif self.boss == 0 and (not self.training or self.wave >= 7):
-            for index in (0, 2):
-                self.enemies.setdefault(index, 3)
-        # Start at showcase intensity: no slow opening waves.
-        self.duration = max(0.65, 0.95 - (self.wave - 1) * 0.015)
-        if self.training:
-            self.duration = 3.2 if self.wave < 4 else 2.8 if self.wave < 10 else 2.4 if self.wave < 22 else 1.8
-        self.remaining = self.duration
-        self.kind = "asteroid" if self.wave % 3 == 0 else "laser"
-        if self.training:
-            self.kind = "asteroid" if (4 <= self.wave <= 6 or self.wave >= 10 and self.wave % 3 == 0) else "laser"
-        self.asteroid_timers.clear()
-        self.asteroid_pending.clear()
-        self.asteroid_delays.clear()
-        self.asteroid_flashes.clear()
-        self.asteroid_hits.clear()
-        if self.training and 7 <= self.wave <= 9:
-            self.enemies = {0 if self.wave % 2 else 2: 3}
-            self.phase = "aim"
-            self.hazards.clear()
-            return
-        if self.kind == "asteroid":
-            others = [i for i in range(9) if i != self.ship]
-            count = 2 if self.training and self.wave < 22 else 5
-            targets = {self.ship, *self.rng.sample(others, count)}
-            order = self.rng.sample(sorted(targets), len(targets))
-            # Mix singles and clusters, with independently sampled arrival times.
-            # Members of a cluster share their appearance and impact times.
-            groups = [order[:2], order[2:3]]
-            rest = order[3:]
-            while rest:
-                size = self.rng.randint(1, min(3, len(rest)))
-                groups.append(rest[:size])
-                rest = rest[size:]
-            horizon = 2.4 if self.training else 1.2
-            arrivals = [self.rng.uniform(0, horizon) for _ in groups]
-            first = min(arrivals)
-            self.hazards.clear()
-            for group, arrival in zip(groups, arrivals):
-                delay = arrival-first
-                warning = self.rng.uniform(self.duration, self.duration*1.4)
-                for slot in group:
-                    self.asteroid_pending[slot] = (delay, warning)
-            self.advance_asteroids(0)
-        else:
-            self.axis = self.rng.choice(("row", "column"))
-            ship_lane = self.ship // 3 if self.axis == "row" else self.ship % 3
-            safe_lane = self.rng.choice([i for i in range(3) if i != ship_lane])
-            self.hazards = {i for i in range(9) if (i // 3 if self.axis == "row" else i % 3) != safe_lane}
-            if self.training and self.wave < 22:
-                self.hazards = {i for i in range(9) if (i // 3 if self.axis == "row" else i % 3) == ship_lane}
+    def say(self, message):
+        self.feedback = message
+        self.feedback_time = 2.0
 
-    def neighbor(self, direction):
-        dr, dc = {"left": (0, -1), "right": (0, 1), "up": (-1, 0), "down": (1, 0)}[direction]
-        row, col = divmod(self.ship, 3)
-        row, col = row + dr, col + dc
-        return row * 3 + col if 0 <= row < 3 and 0 <= col < 3 else None
-
-    def advance(self, dt):
-        if self.paused or self.phase in ("ready", "briefing", "over"):
-            return
-        if self.phase == "victory":
-            self.burst = max(0, self.burst - dt)
-            return
-        self.energy = min(100, self.energy + dt * 9)
-        self.shot_cooldown = max(0, self.shot_cooldown - dt)
-        self.shot_flash = max(0, self.shot_flash - dt)
-        self.enemy_flashes = {i: timer-dt for i, timer in self.enemy_flashes.items() if timer > dt}
-        self.contact_flash = max(0, self.contact_flash-dt)
-        self.contact_cooldown = max(0, self.contact_cooldown-dt)
-        self.reward_flash = max(0, self.reward_flash-dt)
-        self.growth = max(0, self.growth - dt)
-        self.flight = max(0, self.flight - dt)
-        self.burst = max(0, self.burst - dt)
-        if self.burst:
-            return
-        if self.phase == "aim":
-            if not self.enemies:
-                self.phase = "cooldown"
-                self.remaining = 1.2
-            return
-        self.asteroid_flashes = {slot: remaining-dt for slot, remaining in self.asteroid_flashes.items() if remaining > dt}
-        if self.kind == "asteroid" and self.phase == "warning":
-            self.advance_asteroids(dt)
-            return
-        self.remaining -= dt
-        if self.remaining > 0:
-            return
-        if self.phase == "warning":
-            self.hit = (not self.flight and self.ship in self.hazards) or (self.split and self.wing in self.hazards)
-            if self.hit:
-                self.shields -= 1
-            else:
-                self.score += 100
-            self.phase = "impact"
-            self.remaining = 0.25
-        elif self.phase == "impact":
-            self.phase = "over" if self.shields == 0 else "cooldown"
-            self.remaining = 1.2 if self.training else .12
-            self.hazards = set()
-        else:
-            self.next_wave()
-
-    def advance_asteroids(self, dt):
-        for slot, (delay, warning) in list(self.asteroid_pending.items()):
-            if delay > dt + 1e-9:
-                self.asteroid_pending[slot] = (delay-dt, warning)
-            else:
-                del self.asteroid_pending[slot]
-                self.asteroid_timers[slot] = warning + delay
-                self.asteroid_delays[slot] = warning
-                self.hazards.add(slot)
-        for slot in list(self.asteroid_timers):
-            self.asteroid_timers[slot] -= dt
-            if self.asteroid_timers[slot] > 1e-9:
-                continue
-            del self.asteroid_timers[slot]
-            self.hazards.discard(slot)
-            self.asteroid_flashes[slot] = .32
-            hit = (not self.flight and self.ship == slot) or (self.split and self.wing == slot)
-            if hit:
-                self.shields -= 1
-                self.asteroid_hits.add(slot)
-            else:
-                self.score += 20
-            if self.shields <= 0:
-                self.phase = "over"
-                self.hazards.clear()
-                self.asteroid_timers.clear()
-                self.asteroid_pending.clear()
-                return
-        if self.asteroid_timers or self.asteroid_pending:
-            self.remaining = min(list(self.asteroid_timers.values()) + [delay for delay, _ in self.asteroid_pending.values()])
-        else:
-            self.phase = "impact"
-            self.remaining = .25
+    def finish(self):
+        self.state = 'complete'
+        self.rocks.clear()
+        self.pending.clear()
+        self.flashes.clear()
 
     @property
-    def playing(self):
-        return not self.paused and self.phase not in ("ready", "briefing", "over", "victory")
+    def safe_side(self):
+        return ('top', 'right', 'bottom', 'left')[min(self.progress, 3)]
 
-    def ability(self, name):
-        if not self.playing or self.burst:
-            return False
-        if name == "split" and self.split:
-            self.split = False
-            self.wing = None
-            self.message = "WING MERGED"
-            return True
-        if name == "float" and self.flight:
-            self.flight = 0
-            self.message = "LANDING"
-            return True
-        cost = {"grow": 25, "split": 30, "float": 35, "fullscreen": 100}[name]
-        if self.energy < cost or (name == "grow" and self.growth):
-            self.message = "RECHARGING / SHOOT ENEMIES FOR ENERGY"
-            return False
-        self.energy -= cost
-        if name == "grow":
-            self.growth = 5
-            self.message = "GUNSHIP / DOUBLE DAMAGE FOR 5 SECONDS"
-        elif name == "split":
-            self.split = True
-            self.message = "WING DEPLOYED / USE YOUR WINDOW FOCUS SHORTCUTS"
-        elif name == "float":
-            self.flight = 3
-            self.message = "FREE FLIGHT / 3 SECONDS OF EVASION"
-        else:
-            self.burst = .9
-            # Snapshot victims: a phase change cannot damage newly spawned armor.
-            victims = list(self.enemies)
-            stage = self.boss
-            for enemy in victims:
-                if self.boss != stage:
-                    break
-                self.damage(enemy, 8)
-            self.message = "FULLSCREEN NOVA"
-        return True
+    @property
+    def beacon(self):
+        x, y, w, h = self.arena
+        return x+w*.75, y+h*.5
 
-    def fire(self, direction, targets, tiles):
-        if not self.playing or self.shot_cooldown or self.burst:
-            return False
-        self.shot_direction = direction
-        self.shot_flash = .16
-        self.shot_tiles = set(tiles)
-        self.shot_cooldown = .20 if self.growth else .32
-        stage = self.boss
-        for target in targets:
-            if self.boss != stage:
-                break
-            self.damage(target, 2 if self.growth else 1)
-        return True
-
-    def damage(self, enemy, amount):
-        if enemy not in self.enemies:
+    def observe(self, geometry, arena, focused):
+        self.geometry, self.arena, self.focused = geometry, arena, focused
+        ship = geometry.get(4)
+        if not ship:
             return
-        self.enemies[enemy] -= amount
-        self.enemy_flashes[enemy] = .2
-        if self.enemies[enemy] > 0:
+        x, y, w, h = arena
+        cx, cy = center(ship)
+        self.ship_slot = min(2, max(0, int((cy-y)/h*3)))*3 + min(2, max(0, int((cx-x)/w*3)))
+        mode = ship.get('fullscreen', 0)
+        floating = ship.get('floating', False)
+        self.valid_ship = not mode and not floating
+        if self.state != 'active' or self.paused:
             return
-        del self.enemies[enemy]
-        self.enemy_flashes[enemy] = 1.2
-        self.score += 250
-        self.energy = min(100, self.energy + 20)
-        repaired = self.shields < 3
-        self.shields = min(3, self.shields + 1)
-        result = "ARMOR BROKEN" if self.boss else "ROUTE CLEAR"
-        self.reward_text = f"{result} / +250 / " + ("SHIELD +1" if repaired else "SHIELDS FULL")
-        self.reward_flash = 2.5
-        self.kill_rewards[enemy] = self.reward_text
-        if self.boss == 1:
-            self.boss = 2
-            self.enemies = {0: 6, 10: 6, 11: 6}
-            self.message = "ARMOR SHATTERED / THREE HOSTILE WINDOWS"
-        elif self.boss == 2 and not self.enemies:
-            self.boss = 3
-            self.enemies = {0: 12}
-            self.message = "CORE DETACHED / TRACK THE FLOATING BOSS"
-        elif self.boss == 3 and not self.enemies:
-            self.boss = 4
-            self.phase = "victory"
-            self.hazards.clear()
-            self.asteroid_timers.clear()
-            self.asteroid_pending.clear()
-            self.asteroid_flashes.clear()
-            self.score += 2000
-            self.message = "WINDOW DEVOURER DEFEATED"
+        if self.mission == 'asteroids' and self.valid_ship:
+            self.visited.add(self.ship_slot)
+        elif self.mission == 'float':
+            if self.step == 0 and floating and not mode:
+                self.step = 1
+                self.floating_origin = center(ship)
+                self.say('UNDOCKED / FLY TO THE BEACON')
+            elif self.step == 1 and floating and not mode:
+                bx, by = self.beacon
+                moved = self.floating_origin and sum((a-b)**2 for a,b in zip(center(ship), self.floating_origin)) > 40**2
+                if moved and abs(cx-bx) < w*.09 and abs(cy-by) < h*.12:
+                    self.step = 2
+                    self.say('BEACON REACHED / RETURN TO TILING')
+            elif self.step == 1 and not floating and not mode:
+                self.step = 0
+                self.say('LANDED EARLY / UNDOCK TO TRY AGAIN')
+            elif self.step == 2 and not floating and not mode:
+                self.finish()
+        elif self.mission in ('fullscreen', 'maximize'):
+            expected = 2 if self.mission == 'fullscreen' else 1
+            if self.step == 0 and mode == expected:
+                self.step = 1
+                self.say('SCAN COMPLETE / TOGGLE AGAIN TO RETURN')
+            elif self.step == 1 and mode == 0:
+                self.finish()
 
-    def ram(self, enemy):
-        """Contact with a living enemy hurts; focus alone never causes damage."""
-        if not self.playing or self.burst or enemy not in self.enemies or self.contact_cooldown:
+    def close_target(self, actor):
+        if self.mission != 'shoot' or self.state != 'active' or self.paused or actor not in self.enemies:
             return False
-        self.shields = max(0, self.shields-1)
-        self.contact_flash = 1.2
-        self.contact_cooldown = .8
-        self.message = "COLLISION / -1 SHIELD / SHOOT BEFORE ENTERING"
-        if self.shields == 0:
-            self.phase = "over"
-            self.hazards.clear()
-            self.asteroid_timers.clear()
-            self.asteroid_pending.clear()
+        self.enemies.remove(actor)
+        self.progress += 1
+        self.say('TARGET DESTROYED / WINDOW CLOSED')
+        if not self.enemies:
+            self.finish()
         return True
+
+    def spawn_rocks(self):
+        available = [i for i in range(9) if i not in self.rocks and all(slot != i for _, slot in self.pending)]
+        if not available:
+            return
+        count = min(len(available), self.rng.choice([1, 1, 2, 2, 3]))
+        slots = self.rng.sample(available, count)
+        # Every burst asks the pilot to move, with additional randomly placed rocks.
+        if self.ship_slot in available and self.ship_slot not in slots:
+            slots[0] = self.ship_slot
+        together = self.rng.random() < .5
+        for slot in slots:
+            delay = 0 if together else self.rng.uniform(0, 1.1)
+            self.pending.append((delay, slot))
+        self.spawn_in = self.rng.uniform(3.8, 5.2)
+
+    def advance(self, dt):
+        if self.state != 'active' or self.paused:
+            return
+        self.feedback_time = max(0, self.feedback_time-dt)
+        self.flashes = {s: t-dt for s,t in self.flashes.items() if t > dt}
+        if self.mission == 'asteroids':
+            # Floating/fullscreen cannot bypass the move lesson.
+            if not self.valid_ship:
+                return
+            for slot in list(self.rocks):
+                self.rocks[slot] -= dt
+                if self.rocks[slot] <= 0:
+                    del self.rocks[slot]
+                    self.flashes[slot] = .65
+                    if slot == self.ship_slot:
+                        self.say('HIT / MOVE OUT BEFORE THE COUNTDOWN ENDS')
+                    else:
+                        self.progress += 1
+                        self.say('ASTEROID DODGED')
+            pending = []
+            for delay, slot in self.pending:
+                if delay <= dt:
+                    self.rocks[slot] = 3.2  # Each appearance gets a full warning.
+                else:
+                    pending.append((delay-dt, slot))
+            self.pending = pending
+            self.spawn_in -= dt
+            if self.spawn_in <= 0:
+                self.spawn_rocks()
+            if self.progress >= 6 and len(self.visited) == 9:
+                self.finish()
+        elif self.mission == 'lasers':
+            if not self.valid_ship:
+                return
+            if self.cooldown:
+                self.cooldown = max(0, self.cooldown-dt)
+                return
+            self.timer -= dt
+            if self.timer <= 0:
+                self.fired_side = self.safe_side
+                if side(self.geometry[4], self.arena) == self.safe_side:
+                    self.progress += 1
+                    self.say('GATE CLEARED')
+                    if self.progress == 4:
+                        self.finish()
+                else:
+                    self.say('LASER HIT / TRY THIS GATE AGAIN')
+                self.cooldown = 2.0
+                self.timer = 5.0
+        elif self.mission == 'resize' and self.baseline_width:
+            ship = self.geometry.get(4)
+            ratio = ship['size'][0]/self.baseline_width if ship else 0
+            matched = self.valid_ship and (ratio >= 1.2 if self.step == 0 else abs(ratio-1) <= .08)
+            self.hold = self.hold+dt if matched else 0
+            if self.hold >= .6:
+                self.hold = 0
+                if self.step == 0:
+                    self.step = 1
+                    self.say('CARGO LOADED / RESTORE CRUISING WIDTH')
+                else:
+                    self.finish()
+
+    def instruction(self):
+        c = self.controls
+        ship = self.geometry.get(4)
+        if self.mission != 'shoot' and self.focused != 4:
+            return f"{c['focus']} / SELECT THE CYAN SHIP"
+        if self.mission in ('asteroids', 'lasers', 'resize') and not self.valid_ship:
+            mode = ship.get('fullscreen', 0) if ship else 0
+            key = c['fullscreen'] if mode == 2 else c['maximize'] if mode == 1 else c['float']
+            return f'{key} / RETURN TO TILING'
+        if self.mission == 'asteroids':
+            return f"{c['move']} / MOVE TO A CLEAR SECTOR"
+        if self.mission == 'lasers':
+            if self.cooldown:
+                return 'NEXT GATE IN A MOMENT'
+            current = side(ship, self.arena) if ship else None
+            goal = self.safe_side
+            if current == goal:
+                return 'SAFE / HOLD THIS POSITION'
+            if (current in ('left', 'right')) != (goal in ('left', 'right')):
+                return f"{c['split']} / ROTATE THE TWO WINDOWS"
+            direction = {'top':'up', 'bottom':'down'}.get(goal, goal)
+            return f"{c.get('move_'+direction, 'Super+Shift+'+direction.upper())} / SWAP TO {goal.upper()}"
+        if self.mission == 'shoot':
+            if self.focused in self.enemies:
+                return f"{c['close']} / DESTROY SELECTED SHIP"
+            return f"{c['focus']} / SELECT A RED SHIP"
+        if self.mission == 'float':
+            return (f"{c['float']} / UNDOCK", f"{c['drag']} / CENTER SHIP ON BEACON", f"{c['float']} / LAND BACK IN TILING")[self.step]
+        if self.mission == 'resize':
+            return f"{c['resize']} / " + ('WIDEN TO 120%' if self.step == 0 else 'RETURN TO 100%')
+        mode = ship.get('fullscreen', 0) if ship else 0
+        expected = 2 if self.mission == 'fullscreen' else 1
+        if mode and mode != expected:
+            key = c['fullscreen'] if mode == 2 else c['maximize']
+            return f'{key} / EXIT THIS MODE FIRST'
+        return f"{c[self.mission]} / " + ('BEGIN SCAN' if self.step == 0 else 'RETURN TO TILING')
+
+    def status(self):
+        if self.mission == 'asteroids':
+            return f'SECTORS {len(self.visited)}/9   DODGES {min(6,self.progress)}/6'
+        if self.mission == 'lasers':
+            return f'GATES {self.progress}/4   SAFE HALF: {self.safe_side.upper()}'
+        if self.mission == 'shoot':
+            return f'TARGETS CLOSED {self.progress}/3'
+        if self.mission == 'resize' and self.baseline_width and 4 in self.geometry:
+            return f"SHIP WIDTH {self.geometry[4]['size'][0]/self.baseline_width:.0%}"
+        return f'STEP {self.step+1}/' + ('3' if self.mission == 'float' else '2')

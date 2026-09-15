@@ -2,7 +2,7 @@
 
 import math
 import random
-from controls import lesson_for
+from controls import MISSIONS
 
 BG = (0.025, 0.043, 0.075)
 CYAN = (0.3, 0.94, 0.86)
@@ -76,199 +76,137 @@ def asteroid(cr, x, y, radius, t, alpha=1):
     cr.stroke()
 
 
-def draw_tile(cr, w, h, game, slot, player, ready, away, t, actor=None, controlled=4):
-    actor = slot if actor is None else actor
-    wing = actor == 9
-    player = player or wing
-    lesson = lesson_for(max(1, game.wave))
-    hints = game.controls
-    color(cr, BG)
-    cr.paint()
-    # Scale the interface down gracefully on smaller displays.
-    scale = min(w / 440, h / 290, 1.35)
-    cr.scale(scale, scale)
-    w, h = w / scale, h / scale
-    for sx, sy, radius in STARS:
-        color(cr, MUTED, .3 + radius * .15)
-        cr.arc(sx * w, (sy * h + t * (2 + radius)) % h, radius, 0, math.tau)
-        cr.fill()
-    color(cr, MUTED, .08)
-    cr.set_line_width(1)
-    for x in range(0, int(w), 48):
-        cr.move_to(x, 0)
-        cr.line_to(x, h)
-    for y in range(0, int(h), 48):
-        cr.move_to(0, y)
-        cr.line_to(w, y)
-    cr.stroke()
+def fitted(cr, message, x, y, width, size=15, tint=WHITE):
+    cr.select_font_face('monospace', 0, 0)
+    cr.set_font_size(size)
+    extent = cr.text_extents(message).width
+    text(cr, message, x, y, min(size, size*width/max(1,extent)), tint, True)
 
-    asteroid_impact = slot in game.asteroid_flashes
-    danger = (slot in game.hazards and game.phase in ("warning", "impact")) or asteroid_impact
-    impact = asteroid_impact if game.kind == "asteroid" else game.phase == "impact"
-    tint = AMBER if game.kind == "asteroid" else RED
-    if danger:
-        color(cr, tint, .42 if impact else .14)
-        cr.paint()
-        color(cr, tint, .65 + .25 * math.sin(t*8))
-        cr.set_line_width(3)
-        cr.rectangle(6, 6, w-12, h-12)
-        cr.stroke()
-        if game.kind == "laser":
-            vertical = game.axis == "column"
-            if game.phase == "warning":
-                cr.set_dash([9, 9], t * 15)
-                line(cr, [(w/2, 55), (w/2, h-45)] if vertical else [(0, h/2), (w, h/2)], tint, 2, .55)
-                cr.set_dash([])
-            else:
-                for width, alpha in [(65, .12), (28, .5), (7, 1)]:
-                    line(cr, [(w/2, 0), (w/2, h)] if vertical else [(0, h/2), (w, h/2)], WHITE if width == 7 else tint, width, alpha)
-        else:
-            progress = 1 - game.asteroid_timers.get(slot, 0) / game.asteroid_delays.get(slot, 1)
-            asteroid(cr, w/2, h/2-25*(1-progress), 62 if impact else 20 + progress*32, t + slot)
 
-    label = "HYPRSPLITTER" if actor == 0 else f"SECTOR {slot//3+1}.{slot%3+1}"
-    text(cr, label, 20, 29, 13, CYAN if actor == 0 else MUTED)
-    text(cr, f"{game.score:06d}  /  WAVE {game.wave:02d}", w-230, 29, 13, WHITE)
-    line(cr, [(20, 43), (w-20, 43)], MUTED, 1, .25)
-
-    if player:
-        if game.enemies:
-            cr.set_dash([5, 6])
-            line(cr, [(w/2, h/2-66), (w/2, 47)], CYAN, 2, .55)
-            cr.set_dash([])
-            line(cr, [(w/2-6, 56), (w/2, 47), (w/2+6, 56)], CYAN, 2)
-        if game.contact_flash or (game.hit and game.phase == "impact") or (asteroid_impact and slot in game.asteroid_hits):
-            color(cr, RED, .2)
-            cr.paint()
+def draw_tile(cr, w, h, game, actor, ready, away, t):
+    color(cr, BG); cr.paint()
+    scale = min(w/480, h/320, 1.5)
+    cr.scale(scale,scale)
+    w,h = w/scale,h/scale
+    for sx,sy,radius in STARS:
+        color(cr,MUTED,.35)
+        cr.arc(sx*w,(sy*h+t*2)%h,radius,0,math.tau);cr.fill()
+    mission = MISSIONS[game.index]
+    pilot = actor == 4
+    selected = actor == game.focused
+    rect = game.geometry.get(actor)
+    slot = actor
+    if rect:
+        from game import center
+        x,y,aw,ah = game.arena
+        cx,cy = center(rect)
+        slot = min(2,max(0,int((cy-y)/ah*3)))*3 + min(2,max(0,int((cx-x)/aw*3)))
+    danger = False
+    if game.mission == 'asteroids' and game.state == 'active':
+        danger = slot in game.rocks or slot in game.flashes
+        if danger:
+            color(cr,AMBER,.25 if slot in game.flashes else .09);cr.paint()
+            asteroid(cr,w/2,h/2-20,50,t)
+            fitted(cr, f'IMPACT IN {game.rocks[slot]:.1f}s' if slot in game.rocks else 'IMPACT',w/2,77,w-40,16,AMBER)
+        elif not pilot:
+            fitted(cr,'EXPLORED' if slot in game.visited else 'UNVISITED / FLY HERE',w/2,h/2,w-50,17,MUTED if slot in game.visited else CYAN)
+    elif game.mission == 'lasers' and game.state == 'active' and rect:
+        # Draw the actual unsafe half in desktop coordinates; it stays in place
+        # while the user's two real windows rotate or swap around it.
+        x,y,aw,ah = game.arena
+        safe = game.fired_side if game.cooldown else game.safe_side
+        dx,dy,dw,dh = {'top':(x,y+ah/2,aw,ah/2),'bottom':(x,y,aw,ah/2),
+                       'left':(x+aw/2,y,aw/2,ah),'right':(x,y,aw/2,ah)}[safe]
+        rx,ry = rect['at']
+        rw,rh = rect['size']
+        color(cr,RED,.10)
+        cr.rectangle((dx-rx)/rw*w,(dy-ry)/rh*h,dw/rw*w,dh/rh*h);cr.fill()
         cr.save()
-        cr.translate(w/2, h/2-20)
-        cr.rotate({"up": 0, "right": math.pi/2, "down": math.pi, "left": -math.pi/2}[game.shot_direction])
-        ship(cr, 0, 0, t)
+        cr.rectangle((dx-rx)/rw*w,(dy-ry)/rh*h,dw/rw*w,dh/rh*h);cr.clip()
+        horizontal = safe in ('top','bottom')
+        for offset in (.2,.5,.8):
+            points = ([(0,(dy+dh*offset-ry)/rh*h),(w,(dy+dh*offset-ry)/rh*h)] if horizontal
+                      else [((dx+dw*offset-rx)/rw*w,0),((dx+dw*offset-rx)/rw*w,h)])
+            if game.cooldown:
+                line(cr,points,RED,24,.2)
+                line(cr,points,WHITE,3,.8)
+            else:
+                cr.set_dash([6,12]);line(cr,points,RED,1,.35);cr.set_dash([])
         cr.restore()
-        name = "WING" if wing else "PILOT 01"
-        if actor == controlled:
-            name += " / ACTIVE"
-        if game.phase == "aim":
-            name = "AUTO-FIRE UP / NO FIRE KEY"
-        if game.growth and actor == 4:
-            name = "GUNSHIP / DOUBLE DAMAGE"
-        if game.flight and actor == 4:
-            name = f"EVASION / {game.flight:.1f}s"
-        elif getattr(game, "is_floating", False) and actor == 4:
-            name = f"FLOATING / {hints['float']} TO LAND"
-        text(cr, name, w/2, h/2+60, 13, CYAN, True)
-        for i in range(3):
-            color(cr, CYAN if i < game.shields else MUTED, 1 if i < game.shields else .25)
-            cr.rectangle(w/2-39+i*28, h/2+72, 22, 5)
-            cr.fill()
-        if game.contact_flash:
-            color(cr, (.25, .02, .04), .96)
-            cr.rectangle(w/2-145, h/2-38, 290, 52)
-            cr.fill()
-            text(cr, "COLLISION / -1 SHIELD", w/2, h/2-5, 19, WHITE, True)
+        from game import side
+        danger = side(rect,game.arena) != safe
+        fitted(cr, f'SAFE HALF: {safe.upper()} / LASER IN {game.timer:.1f}s' if not game.cooldown else game.feedback,
+               w/2,77,w-40,16,RED if danger else CYAN)
+        # A compact map makes the world-space safe half unambiguous.
+        mx,my,mw,mh = 28,92,96,56
+        color(cr,RED,.4);cr.rectangle(mx,my,mw,mh);cr.fill()
+        sx,sy,sw,sh = {'top':(0,0,1,.5),'bottom':(0,.5,1,.5),'left':(0,0,.5,1),'right':(.5,0,.5,1)}[safe]
+        color(cr,CYAN,.85);cr.rectangle(mx+sx*mw,my+sy*mh,sw*mw,sh*mh);cr.fill()
+    elif game.mission == 'float' and not pilot and rect:
+        bx,by = game.beacon
+        rx,ry = rect['at'];rw,rh = rect['size']
+        bx,by = (bx-rx)/rw*w,(by-ry)/rh*h
+        color(cr,CYAN,.7);cr.set_line_width(2)
+        cr.arc(bx,by,42,0,math.tau);cr.stroke()
+        line(cr,[(bx-55,by),(bx+55,by)],CYAN,1,.5)
+        line(cr,[(bx,by-55),(bx,by+55)],CYAN,1,.5)
+        fitted(cr,'DOCKING BEACON',bx,by+70,min(300,w-40),18,CYAN)
+
+    heading = 'YOUR SHIP' if pilot else 'ENEMY SHIP' if actor in game.enemies else 'SECTOR '+str(slot+1) if game.mission == 'asteroids' else 'SPACE STATION'
+    text(cr,heading,20,29,13,CYAN if pilot else RED if actor in game.enemies else MUTED)
+    fitted(cr,f'LESSON {game.index+1} / 7',w-92,29,145,12,MUTED)
+    line(cr,[(20,43),(w-20,43)],MUTED,1,.3)
+    if selected:
+        color(cr,CYAN if actor not in game.enemies else AMBER,.8)
+        cr.set_line_width(3);cr.rectangle(4,4,w-8,h-8);cr.stroke()
+    if pilot:
+        ship(cr,w/2,h/2-12,t)
+        if game.mission == 'asteroids':
+            # Mini chart records travel, without adding a second action.
+            for s in range(9):
+                color(cr,CYAN if s in game.visited else MUTED,.7 if s in game.visited else .25)
+                cr.rectangle(22+(s%3)*12,60+(s//3)*12,8,8);cr.fill()
+        if game.mission == 'resize' and game.baseline_width:
+            target = 1.2 if game.step == 0 else 1
+            ratio = rect['size'][0]/game.baseline_width if rect else 1
+            barw = min(w-80,360)
+            color(cr,MUTED,.3);cr.rectangle(w/2-barw/2,83,barw,6);cr.fill()
+            color(cr,CYAN,.8);cr.rectangle(w/2-barw/2,83,barw*min(1,ratio/1.5),6);cr.fill()
+            bx = w/2-barw/2+barw*target/1.5
+            line(cr,[(bx,77),(bx,96)],AMBER,3)
+            fitted(cr,f'TARGET {target:.0%} / CURRENT {ratio:.0%}',w/2,115,w-50,15,CYAN)
+        fitted(cr,game.status(),w/2,h-91,w-40,14,CYAN)
     elif actor in game.enemies:
-        boss = game.boss > 0
-        locked = actor == game.locked_target
-        color(cr, RED, .07)
-        cr.paint()
-        color(cr, RED, .9)
-        cr.set_line_width(3)
-        cr.rectangle(4, 4, w-8, h-8)
-        cr.stroke()
-        text(cr, "HOSTILE / TOUCH = -1 SHIELD", w/2, 65, 12, RED, True)
-        if locked:
-            color(cr, CYAN, .1)
-            cr.paint()
-            color(cr, CYAN, .8)
-            cr.set_line_width(2)
-            cr.rectangle(8, 8, w-16, h-16)
-            cr.stroke()
-        if actor in game.enemy_flashes:
-            color(cr, WHITE, .18)
-            cr.paint()
-        cr.save()
-        cr.translate(w/2, h/2-12)
-        cr.scale(2.6 if boss else 1.8, 2.6 if boss else 1.8)
-        enemy(cr, 0, 0, RED)
-        if boss:
-            color(cr, RED, .3)
-            cr.arc(0, 0, 31, -t*.4, -t*.4+math.pi*1.6)
-            cr.stroke()
-        cr.restore()
-        title = {1: "THE WINDOW DEVOURER", 2: "ARMOR FRAGMENT", 3: "DETACHED CORE"}.get(game.boss, "INTERCEPTOR")
-        if game.phase == "aim":
-            title = "LOCKED / STILL HOSTILE" if locked else "HOSTILE TARGET"
-        text(cr, title, w/2, h/2+50, 14, RED, True)
-        text(cr, f"HULL {game.enemies[actor]:02d} / GET BELOW THIS WINDOW", w/2, h/2+69, 11, WHITE, True)
-    elif actor in game.enemy_flashes:
-        text(cr, "ROUTE CLEAR", w/2, h/2-10, 20, CYAN, True)
-        text(cr, game.kill_rewards.get(actor, "+250 POINTS"), w/2, h/2+20, 12, CYAN, True)
-    elif not danger:
-        text(cr, "CLEAR", w/2, h/2+5, 17, MUTED, True)
+        color(cr,RED,.07);cr.paint()
+        cr.save();cr.translate(w/2,h/2-20);cr.scale(2.5,2.5);enemy(cr,0,0,RED);cr.restore()
+        fitted(cr,'TARGET SELECTED' if selected else 'SELECT THIS SHIP',w/2,h/2+52,w-40,18,AMBER if selected else RED)
+    elif game.mission not in ('asteroids','lasers','float'):
+        fitted(cr,'TRAINING STATION',w/2,h/2,w-40,20,MUTED)
 
-    if game.shot_flash and actor in game.shot_tiles:
-        vertical = game.shot_direction in ("up", "down")
-        points = [(w/2, 44), (w/2, h-48)] if vertical else [(0, h/2), (w, h/2)]
-        line(cr, points, CYAN, 16, .2)
-        line(cr, points, WHITE, 3, .9)
-
-    if not ready or game.phase in ("ready", "briefing", "over", "victory") or game.paused or away:
-        if actor == 0 or (player and game.phase != "ready"):
-            color(cr, BG, .92)
-            cr.rectangle(16, h/2-70, w-32, 145)
-            cr.fill()
-            if not ready:
-                title, subtitle = "ASSEMBLING SECTORS", "Building nine real Hyprland tiles"
-            elif game.phase == "over":
-                title, subtitle = "SHIP LOST", f"SCORE {game.score:06d} / R to restart"
-            elif game.phase == "victory":
-                title, subtitle = "DEVOURER DEFEATED", f"SCORE {game.score:06d} / R to fly again"
-            elif away or game.paused:
-                title, subtitle = "PAUSED", "Return to board / Space to resume" if away else "Space to resume"
-            else:
-                title = lesson[2] if game.training else "OMARCHY FLIGHT PRACTICE"
-                subtitle = lesson[3].format(**hints) if game.training else f"Swap windows: {hints['move']}"
-            text(cr, title, w/2, h/2-26, 18, CYAN, True)
-            text(cr, subtitle, w/2, h/2+3, 13, WHITE, True)
-            if ready and game.phase in ("ready", "briefing"):
-                detail = lesson[4].format(**hints) if game.training else "Auto-fire / use your real desktop shortcuts"
-                text(cr, detail, w/2, h/2+30, 11, WHITE, True)
-                text(cr, "SPACE WHEN READY", w/2, h/2+58, 14, CYAN, True)
-    elif danger:
-        label = "IMPACT" if impact else (f"ASTEROID / {game.asteroid_timers.get(slot, 0):.1f}s" if game.kind == "asteroid" else "LASER LOCK")
-        text(cr, label, 20, 83 if actor in game.enemies else 65, 11, tint)
-
-    if game.phase == "warning" and (game.kind != "asteroid" or slot in game.asteroid_timers):
-        color(cr, tint if danger else CYAN, .8)
-        progress = (game.asteroid_timers[slot] / game.asteroid_delays[slot]
-                    if game.kind == "asteroid" else game.remaining/game.duration)
-        cr.rectangle(20, h-61, (w-40)*max(0, progress), 3)
-        cr.fill()
-    tip = lesson[4].format(**hints) if game.training else f"{hints['move']} SWAP / AUTO-FIRE"
-    if game.phase == "aim" and player:
-        tip = game.aim_hint
-    if player and game.reward_flash:
-        tip = game.reward_text
-    if player and game.contact_flash:
-        tip = "SHOOT THE ENEMY BEFORE ENTERING ITS TILE"
-    if player or actor == 0:
-        text(cr, tip, w/2, h-42, 10, CYAN, True)
-        text(cr, f"{hints['focus']} focus / {hints['close']} quit", w/2, h-26, 10, MUTED, True)
-        text(cr, "SPACE pause / R restart / Super = Windows key", w/2, h-11, 9, MUTED, True)
-    elif actor == controlled:
-        text(cr, f"Focus your ship: {hints['focus']}", w/2, h-22, 12, CYAN, True)
-    if actor == 4 and (not game.training or game.wave >= 16):
-        color(cr, CYAN, .15)
-        cr.rectangle(w-158, 47, 142, 28)
-        cr.fill()
-        button = "MERGE WING" if game.split else ("DEPLOY WING (30)" if game.energy >= 30 else f"CHARGING {int(game.energy)}/30")
-        text(cr, button, w-87, 65, 11, CYAN, True)
-    if game.burst and actor == 4:
-        color(cr, CYAN, .35)
-        cr.paint()
-        for radius in range(60, int(max(w,h)), 100):
-            color(cr, WHITE, .5)
-            cr.set_line_width(4)
-            cr.arc(w/2, h/2, radius + (t*250)%100, 0, math.tau)
-            cr.stroke()
-        text(cr, "F U L L S C R E E N   N O V A", w/2, h/2, 27, WHITE, True)
+    show_card = pilot and (not ready or game.state != 'active' or away or game.paused)
+    if show_card:
+        color(cr,BG,.97);cr.rectangle(12,52,w-24,h-114);cr.fill()
+        if not ready:
+            title, detail, key, note = 'PREPARING LESSON', 'Arranging your windows...', '', ''
+        elif game.state == 'complete':
+            title = 'LESSON COMPLETE' if game.index < 6 else 'FLIGHT SCHOOL COMPLETE'
+            detail = mission[1]
+            key = 'SPACE / NEXT LESSON' if game.index < 6 else '1-7 / REVISIT A LESSON'
+            note = 'R to practice again'
+        elif away or game.paused:
+            title,detail,key,note = 'PAUSED', 'Take your time.', 'SPACE / RESUME' if game.paused else 'RETURN TO THE LESSON', ''
+        else:
+            title,detail,key,note = mission[1],mission[2],mission[3].format(**game.controls),mission[4]
+        fitted(cr,title,w/2,h/2-64,w-40,23,CYAN)
+        fitted(cr,detail,w/2,h/2-26,w-40,15)
+        fitted(cr,key,w/2,h/2+12,w-40,17,CYAN)
+        fitted(cr,note,w/2,h/2+43,w-40,13,MUTED)
+        if ready and game.state == 'briefing':
+            fitted(cr,'SPACE / START',w/2,h/2+74,w-40,16,CYAN)
+    if ready:
+        if game.feedback_time and (pilot or actor in game.enemies):
+            fitted(cr,game.feedback,w/2,h-68,w-40,12,AMBER)
+        if game.state == 'active' and (pilot or selected or actor in game.enemies):
+            fitted(cr,game.instruction() if selected or pilot else f"{game.controls['focus']} / SELECT A RED SHIP",w/2,h-43,w-36,16,CYAN)
+    if pilot or selected:
+        fitted(cr,'SPACE pause   R retry   1-7 lessons   ESC quit',w/2,h-17,w-32,10,MUTED)
