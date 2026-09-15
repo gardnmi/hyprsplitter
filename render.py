@@ -67,14 +67,18 @@ def enemy(cr, x, y, tint):
 
 def asteroid(cr, x, y, radius, t, alpha=1):
     points = [(x + math.cos(i * math.tau / 9 + t*.15) * radius * (1 if i % 2 else .78),
-               y + math.sin(i * math.tau / 9 + t*.15) * radius * (1 if i % 2 else .78)) for i in range(10)]
+               y + math.sin(i * math.tau / 9 + t*.15) * radius * (1 if i % 2 else .78)) for i in range(9)]
+    points.append(points[0])
     line(cr, points, AMBER, 2, alpha)
     color(cr, AMBER, alpha * .3)
     cr.arc(x-radius*.2, y-radius*.15, radius*.17, 0, math.tau)
     cr.stroke()
 
 
-def draw_tile(cr, w, h, game, slot, player, ready, away, t):
+def draw_tile(cr, w, h, game, slot, player, ready, away, t, actor=None, controlled=4):
+    actor = slot if actor is None else actor
+    wing = actor == 9
+    player = player or wing
     color(cr, BG)
     cr.paint()
     # Scale the interface down gracefully on smaller displays.
@@ -95,10 +99,12 @@ def draw_tile(cr, w, h, game, slot, player, ready, away, t):
         cr.line_to(w, y)
     cr.stroke()
 
-    danger = slot in game.hazards and game.phase in ("warning", "impact")
+    asteroid_impact = slot in game.asteroid_flashes
+    danger = (slot in game.hazards and game.phase in ("warning", "impact")) or asteroid_impact
+    impact = asteroid_impact if game.kind == "asteroid" else game.phase == "impact"
     tint = AMBER if game.kind == "asteroid" else RED
     if danger:
-        color(cr, tint, .14 if game.phase == "warning" else .42)
+        color(cr, tint, .42 if impact else .14)
         cr.paint()
         color(cr, tint, .65 + .25 * math.sin(t*8))
         cr.set_line_width(3)
@@ -110,34 +116,64 @@ def draw_tile(cr, w, h, game, slot, player, ready, away, t):
                 cr.set_dash([9, 9], t * 15)
                 line(cr, [(w/2, 55), (w/2, h-45)] if vertical else [(0, h/2), (w, h/2)], tint, 2, .55)
                 cr.set_dash([])
-                enemy(cr, w/2, 70, tint)
             else:
                 for width, alpha in [(65, .12), (28, .5), (7, 1)]:
                     line(cr, [(w/2, 0), (w/2, h)] if vertical else [(0, h/2), (w, h/2)], WHITE if width == 7 else tint, width, alpha)
         else:
-            asteroid(cr, w/2, h/2, 62 if game.phase == "impact" else 37 + 6*math.sin(t*4), t)
+            progress = 1 - game.asteroid_timers.get(slot, 0) / game.asteroid_delays.get(slot, 1)
+            asteroid(cr, w/2, h/2-25*(1-progress), 62 if impact else 20 + progress*32, t + slot)
 
-    text(cr, "HYPRSPLITTER" if slot == 0 else f"SECTOR {slot//3+1}.{slot%3+1}", 20, 29, 13, CYAN if slot == 0 else MUTED)
+    label = "HYPRSPLITTER" if actor == 0 else f"SECTOR {slot//3+1}.{slot%3+1}"
+    text(cr, label, 20, 29, 13, CYAN if actor == 0 else MUTED)
     text(cr, f"{game.score:06d}  /  WAVE {game.wave:02d}", w-230, 29, 13, WHITE)
     line(cr, [(20, 43), (w-20, 43)], MUTED, 1, .25)
 
     if player:
-        if game.hit and game.phase == "impact":
+        if (game.hit and game.phase == "impact") or (asteroid_impact and slot in game.asteroid_hits):
             color(cr, RED, .2)
             cr.paint()
-        ship(cr, w/2, h/2-7, t)
-        text(cr, "YOU / PILOT 01", w/2, h/2+82, 14, CYAN, True)
+        cr.save()
+        cr.translate(w/2, h/2-20)
+        cr.rotate({"up": 0, "right": math.pi/2, "down": math.pi, "left": -math.pi/2}[game.shot_direction])
+        ship(cr, 0, 0, t)
+        cr.restore()
+        name = "WING / TAB TO SWITCH" if wing else "PILOT 01"
+        if actor == controlled:
+            name += " / ACTIVE"
+        if game.growth and actor == 4:
+            name = "GUNSHIP / DOUBLE DAMAGE"
+        if game.flight and actor == 4:
+            name = f"FREE FLIGHT / {game.flight:.1f}s"
+        text(cr, name, w/2, h/2+60, 13, CYAN, True)
         for i in range(3):
             color(cr, CYAN if i < game.shields else MUTED, 1 if i < game.shields else .25)
-            cr.rectangle(w/2-39+i*28, h/2+94, 22, 5)
+            cr.rectangle(w/2-39+i*28, h/2+72, 22, 5)
             cr.fill()
+    elif actor in game.enemies:
+        boss = game.boss > 0
+        cr.save()
+        cr.translate(w/2, h/2-12)
+        cr.scale(2.6 if boss else 1.8, 2.6 if boss else 1.8)
+        enemy(cr, 0, 0, RED)
+        if boss:
+            color(cr, RED, .3)
+            cr.arc(0, 0, 31, -t*.4, -t*.4+math.pi*1.6)
+            cr.stroke()
+        cr.restore()
+        title = {1: "THE WINDOW DEVOURER", 2: "ARMOR FRAGMENT", 3: "DETACHED CORE"}.get(game.boss, "INTERCEPTOR")
+        text(cr, title, w/2, h/2+50, 14, RED, True)
+        text(cr, f"HULL {game.enemies[actor]:02d} / IJKL TO FIRE", w/2, h/2+69, 12, WHITE, True)
     elif not danger:
         text(cr, "CLEAR", w/2, h/2+5, 17, MUTED, True)
-        if slot % 3 == 2:
-            enemy(cr, w/2, h/2-38, MUTED)
 
-    if not ready or game.phase == "ready" or game.phase == "over" or game.paused or away:
-        if slot == 0 or (player and game.phase != "ready"):
+    if game.shot_flash and actor in game.shot_tiles:
+        vertical = game.shot_direction in ("up", "down")
+        points = [(w/2, 44), (w/2, h-48)] if vertical else [(0, h/2), (w, h/2)]
+        line(cr, points, CYAN, 16, .2)
+        line(cr, points, WHITE, 3, .9)
+
+    if not ready or game.phase in ("ready", "over", "victory") or game.paused or away:
+        if actor == 0 or (player and game.phase != "ready"):
             color(cr, BG, .92)
             cr.rectangle(16, h/2-70, w-32, 145)
             cr.fill()
@@ -145,21 +181,36 @@ def draw_tile(cr, w, h, game, slot, player, ready, away, t):
                 title, subtitle = "ASSEMBLING SECTORS", "Building nine real Hyprland tiles"
             elif game.phase == "over":
                 title, subtitle = "SHIP LOST", f"SCORE {game.score:06d} / R to restart"
+            elif game.phase == "victory":
+                title, subtitle = "DEVOURER DEFEATED", f"SCORE {game.score:06d} / R to fly again"
             elif away or game.paused:
                 title, subtitle = "PAUSED", "Return to board / Space to resume" if away else "Space to resume"
             else:
-                title, subtitle = "MOVE THE WINDOW.", "DODGE THE RED SECTORS."
+                title, subtitle = "WEAPONIZE THE WINDOW.", "WASD MOVE / IJKL SHOOT"
             text(cr, title, w/2, h/2-26, 22, CYAN, True)
             text(cr, subtitle, w/2, h/2+3, 13, WHITE, True)
             if ready and game.phase == "ready":
-                text(cr, "Arrows / WASD to swap your ship", w/2, h/2+30, 12, MUTED, True)
+                text(cr, "G grow / E split / F float / X nova", w/2, h/2+30, 12, MUTED, True)
                 text(cr, "SPACE TO LAUNCH", w/2, h/2+58, 15, CYAN, True)
     elif danger:
-        label = ("ASTEROID INBOUND" if game.kind == "asteroid" else "LASER LOCK") if game.phase == "warning" else "IMPACT"
-        text(cr, label, w/2, h-57, 15, tint, True)
+        label = "IMPACT" if impact else (f"ASTEROID / {game.asteroid_timers.get(slot, 0):.1f}s" if game.kind == "asteroid" else "LASER LOCK")
+        text(cr, label, w/2, 65, 13, tint, True)
 
-    if game.phase == "warning":
+    if game.phase == "warning" and (game.kind != "asteroid" or slot in game.asteroid_timers):
         color(cr, tint if danger else CYAN, .8)
-        cr.rectangle(20, h-38, (w-40)*max(0, game.remaining/game.duration), 3)
+        progress = (game.asteroid_timers[slot] / game.asteroid_delays[slot]
+                    if game.kind == "asteroid" else game.remaining/game.duration)
+        cr.rectangle(20, h-61, (w-40)*max(0, progress), 3)
         cr.fill()
-    text(cr, "ARROWS / WASD  move    SPACE  pause    R  restart    ESC  quit", w/2, h-15, 10, MUTED, True)
+    text(cr, f"ENERGY {int(game.energy):03d}  G:25 E:30 F:35 X:100", w/2, h-43, 11, CYAN, True)
+    text(cr, "WASD MOVE / IJKL FIRE / TAB WING / SPACE PAUSE", w/2, h-27, 10, MUTED, True)
+    text(cr, "G GROW / E SPLIT / F FLOAT / X NOVA / R RESET / ESC QUIT", w/2, h-12, 9, MUTED, True)
+    if game.burst and actor == 4:
+        color(cr, CYAN, .35)
+        cr.paint()
+        for radius in range(60, int(max(w,h)), 100):
+            color(cr, WHITE, .5)
+            cr.set_line_width(4)
+            cr.arc(w/2, h/2, radius + (t*250)%100, 0, math.tau)
+            cr.stroke()
+        text(cr, "F U L L S C R E E N   N O V A", w/2, h/2, 27, WHITE, True)

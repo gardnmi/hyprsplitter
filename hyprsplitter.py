@@ -3,13 +3,16 @@
 
 import argparse
 import json
+import math
 import os
 import signal
 import socket
 import sys
 import time
+import traceback
 
 from game import Game
+from combat import center, neighbor, firing_lane
 
 
 class Hyprland:
@@ -45,6 +48,8 @@ class Hyprland:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--smoke-test", action="store_true", help="Build the real board, verify swaps and cleanup, then exit")
+    parser.add_argument("--combat-smoke-test", action="store_true", help="Verify native abilities and all boss window transitions, then exit")
+    parser.add_argument("--boss", action="store_true", help="Start with the Window Devourer on launch")
     args = parser.parse_args()
     hypr = Hyprland()
     # The prototype targets the Lua dispatcher API used by this installation.
@@ -68,9 +73,18 @@ def main():
     class App:
         def __init__(self):
             self.game = Game()
+            if args.boss:
+                self.game.wave = 4
             self.windows = {}
             self.addresses = {}
             self.slots = {}
+            self.positions = {i: i for i in range(9)}
+            self.controlled = 4
+            self.fire_key = None
+            self.applied = (False, 0, False, False)
+            self.rebuilding = False
+            self.native_fullscreen = False
+            self.last_boss_move = 0
             self.closing = False
             self.ready = False
             self.away = False
@@ -108,8 +122,8 @@ def main():
             try:
                 return fn()
             except Exception as error:
-                self.error = str(error)
-                print(f"ERROR: {error}", file=sys.stderr, flush=True)
+                self.error = f"{type(error).__name__}: {error}"
+                traceback.print_exc()
                 self.close()
                 return False
 
@@ -141,27 +155,41 @@ def main():
                 self.ready = True
                 hypr.focus(self.addresses[4])
                 print(f"READY workspace={self.workspace} ship={self.addresses[4]}", flush=True)
-                if args.smoke_test:
+                if args.smoke_test or args.combat_smoke_test:
                     self.smoke_time = time.monotonic()
                 return False
             index, parent, direction, ratio = step
             if parent is not None:
                 hypr.focus(self.addresses[parent])
                 hypr.run(f'hl.dsp.layout("preselect {direction}")')
+            self.new_window(index)
+            self.pending = (index, ratio)
+            return True
+
+        def new_window(self, index):
             win = Gtk.Window(title=f"{self.prefix}-{index}")
             win.set_decorated(False)
             win.set_default_size(480, 300)
             win.connect("delete-event", lambda *_: self.close() or True)
             win.connect("key-press-event", self.key)
+            win.connect("key-release-event", self.key_release)
+            win.connect("focus-out-event", lambda *_: self.release_fire())
             area = Gtk.DrawingArea()
             area.connect("draw", lambda widget, cr, i=index: draw_tile(
                 cr, widget.get_allocated_width(), widget.get_allocated_height(),
                 self.game, self.slots.get(i, i), i == 4, self.ready,
-                self.away, time.monotonic()))
+                self.away, time.monotonic(), actor=i, controlled=self.controlled))
             win.add(area)
             self.windows[index] = win
             win.show_all()
-            self.pending = (index, ratio)
+
+        def release_fire(self):
+            self.fire_key = None
+            return False
+
+        def key_release(self, _window, event):
+            if Gdk.keyval_name(event.keyval).lower() in ("i", "j", "k", "l"):
+                self.release_fire()
             return True
 
         def sync(self):
@@ -170,20 +198,132 @@ def main():
             if any(a not in by_address for a in self.addresses.values()):
                 raise RuntimeError("A game tile was closed. Exiting the whole board.")
             self.geometry = {i: by_address[a] for i, a in self.addresses.items()}
-            if any(c["workspace"]["id"] != self.workspace or c["floating"] for c in self.geometry.values()):
+            allowed_float = {4} if self.game.flight or self.applied[3] else set()
+            if self.game.boss == 3 or self.applied[1] == 3:
+                allowed_float.add(0)
+            if any(c["workspace"]["id"] != self.workspace or (c["floating"] and i not in allowed_float) for i, c in self.geometry.items()):
                 raise RuntimeError("A tile left the game board. Restart to rebuild it.")
-            ordered = sorted(self.geometry, key=lambda i: self.geometry[i]["at"][1] + self.geometry[i]["size"][1] / 2)
-            self.slots = {}
-            for row in range(3):
-                group = sorted(ordered[row*3:row*3+3], key=lambda i: self.geometry[i]["at"][0])
-                for col, index in enumerate(group):
-                    self.slots[index] = row*3 + col
-            self.game.ship = self.slots[4]
+            if not hasattr(self, "arena"):
+                x = min(c["at"][0] for c in self.geometry.values())
+                y = min(c["at"][1] for c in self.geometry.values())
+                right = max(c["at"][0] + c["size"][0] for c in self.geometry.values())
+                bottom = max(c["at"][1] + c["size"][1] for c in self.geometry.values())
+                self.arena = x, y, right - x, bottom - y
+            # Physical centers determine hazard sectors even after resizing/splitting.
+            # Hyprland reports destination geometry while its native animation runs.
+            if not self.native_fullscreen:
+                x, y, w, h = self.arena
+                self.slots = {i: min(2, max(0, int((center(c)[1]-y)/h*3)))*3 +
+                              min(2, max(0, int((center(c)[0]-x)/w*3))) for i, c in self.geometry.items()}
+                self.game.ship = self.slots[4]
+                self.game.wing = self.slots.get(9)
             current = hypr.request("activeworkspace", True)
             self.away = current["id"] != self.workspace
             focused = next((c for c in clients if c.get("focusHistoryID") == 0), None)
             if focused and focused["address"] not in self.addresses.values():
                 self.away = True
+            if self.away:
+                self.release_fire()
+
+        def selector(self, index):
+            return f'"address:{self.addresses[index]}"'
+
+        def native_signature(self):
+            return self.game.split, self.game.boss, bool(self.game.growth), bool(self.game.flight)
+
+        def rebuild(self):
+            """Rebuild only our own tiling tree, preserving surviving window identities."""
+            self.rebuilding = True
+            self.rebuild_started = time.monotonic()
+            desired = set(range(9))
+            if self.game.split:
+                desired.add(9)
+            if self.game.boss == 2:
+                desired.update((10, 11))
+            if self.game.flight:
+                desired.add(12)  # Landing sector keeps the tiled board occupied.
+            if self.game.boss == 3:
+                desired.add(13)
+            for index in set(self.windows) - desired:
+                # Merging a wing restores the background tile displaced from its leaf.
+                if index == 9:
+                    other = next((i for i, p in self.positions.items() if p == 9 and i != 9), None)
+                    if other is not None:
+                        self.positions[other] = self.positions[9]
+                self.windows.pop(index).destroy()
+                self.addresses.pop(index, None)
+                self.positions.pop(index, None)
+            for index in desired - set(self.windows):
+                self.positions[index] = index
+                self.new_window(index)
+            if 12 in desired:
+                self.positions[12] = self.positions[4]
+            if 13 in desired:
+                self.positions[13] = self.positions[0]
+            if self.controlled not in desired:
+                self.controlled = 4
+
+        def rebuild_tick(self):
+            if time.monotonic() - self.rebuild_started > 8:
+                raise RuntimeError("Timed out changing the window formation.")
+            clients = {c["initialTitle"]: c for c in hypr.request("clients", True)}
+            if any(f"{self.prefix}-{i}" not in clients for i in self.windows):
+                return
+            self.addresses = {i: clients[f"{self.prefix}-{i}"]["address"] for i in self.windows}
+            actions = [f'hl.dsp.window.float({{window={self.selector(i)}, action="on"}})' for i in self.windows]
+            floating = set()
+            if self.game.flight:
+                floating.add(4)
+            if self.game.boss == 3:
+                floating.add(0)
+            occupants = {pos: i for i, pos in self.positions.items() if i not in floating}
+            steps = [(0, None, None, None), (1, 0, "r", .666667),
+                     (2, 1, "r", 1), (3, 0, "d", .666667), (6, 3, "d", 1),
+                     (4, 1, "d", .666667), (7, 4, "d", 1), (5, 2, "d", .666667), (8, 5, "d", 1)]
+            if self.game.split:
+                steps.append((9, 4, "r", 1))
+            if self.game.boss == 2:
+                # Split the boss's actual window leaf into three independently drawn windows.
+                boss_pos = self.positions[0]
+                steps += [(10, boss_pos, "d", .666667), (11, 10, "d", 1)]
+            for pos, parent, direction, ratio in steps:
+                index = occupants[pos]
+                if parent is not None:
+                    actions += [f'hl.dsp.focus({{window={self.selector(occupants[parent])}}})',
+                                f'hl.dsp.layout("preselect {direction}")']
+                actions += [f'hl.dsp.window.float({{window={self.selector(index)}, action="off"}})',
+                            f'hl.dsp.focus({{window={self.selector(index)}}})']
+                if ratio:
+                    actions.append(f'hl.dsp.layout("splitratio {ratio} exact")')
+            hypr.run(*actions)
+            self.applied = self.native_signature()
+            if self.game.boss == 1:
+                hypr.run(f'hl.dsp.window.resize({{window={self.selector(0)}, x=180, y=160, relative=true}})')
+            if self.game.growth:
+                hypr.run(f'hl.dsp.window.resize({{window={self.selector(4)}, x=140, y=100, relative=true}})')
+            x, y, w, h = self.arena
+            for index in floating:
+                old = self.geometry.get(index)
+                px, py = center(old) if old else (x+w/2, y+h/2)
+                width, height = (240, 190) if index == 4 else (330, 210)
+                px = max(x, min(x+w-width, px-width/2))
+                py = max(y, min(y+h-height, py-height/2))
+                hypr.run(f'hl.dsp.window.resize({{window={self.selector(index)}, x={width}, y={height}}})',
+                         f'hl.dsp.window.move({{window={self.selector(index)}, x={int(px)}, y={int(py)}}})')
+            self.rebuilding = False
+            self.sync()
+            hypr.focus(self.addresses[self.controlled])
+
+        def fire(self, direction):
+            if self.rebuilding or self.away or self.native_fullscreen:
+                return
+            targets, tiles = [], []
+            for source in ([4, 9] if self.game.split else [4]):
+                target, path = firing_lane(self.geometry, source, self.game.enemies, direction)
+                if target is not None:
+                    targets.append(target)
+                tiles.extend(path)
+            self.game.fire(direction, targets, tiles)
 
         def validate_grid(self):
             widths = [c["size"][0] for c in self.geometry.values()]
@@ -192,17 +332,30 @@ def main():
                 raise RuntimeError("Could not form an even 3×3 board with the current layout settings.")
 
         def move(self, direction):
-            if not self.ready or self.game.phase == "over" or self.away:
+            if not self.ready or self.rebuilding or self.game.phase in ("over", "victory") or self.away or self.native_fullscreen:
                 return
             if time.monotonic() - self.last_move < .11:
                 return
             self.sync()
-            target_slot = self.game.neighbor(direction)
-            if target_slot is None:
+            source = self.controlled
+            if source == 4 and self.game.flight:
+                dx, dy = {"left": (-85, 0), "right": (85, 0), "up": (0, -65), "down": (0, 65)}[direction]
+                c = self.geometry[4]
+                x, y, w, h = self.arena
+                px = max(x, min(x+w-c["size"][0], c["at"][0]+dx))
+                py = max(y, min(y+h-c["size"][1], c["at"][1]+dy))
+                hypr.run(f'hl.dsp.window.move({{window={self.selector(4)}, x={int(px)}, y={int(py)}}})')
+                self.last_move = time.monotonic()
+                self.sync()
                 return
-            target = next(i for i, slot in self.slots.items() if slot == target_slot)
-            hypr.run(f'hl.dsp.focus({{window="address:{self.addresses[4]}"}})',
+            blocked = set(self.game.enemies) if self.game.playing else set()
+            blocked.update((4, 9, 12, 13))
+            target = neighbor(self.geometry, source, direction, blocked)
+            if target is None:
+                return
+            hypr.run(f'hl.dsp.focus({{window={self.selector(source)}}})',
                      f'hl.dsp.window.swap({{target="address:{self.addresses[target]}"}})')
+            self.positions[source], self.positions[target] = self.positions[target], self.positions[source]
             self.sync()
             self.last_move = time.monotonic()
 
@@ -211,19 +364,30 @@ def main():
                 key = Gdk.keyval_name(event.keyval).lower()
                 if key in ("escape", "q"):
                     self.close()
-                elif self.ready:
+                elif self.ready and not self.rebuilding:
                     directions = {"w": "up", "a": "left", "s": "down", "d": "right",
                                   "up": "up", "left": "left", "down": "down", "right": "right"}
                     if key in directions:
                         self.move(directions[key])
+                    elif key in ("i", "j", "k", "l"):
+                        self.fire_key = {"i": "up", "j": "left", "k": "down", "l": "right"}[key]
+                        self.fire(self.fire_key)
+                    elif key in ("g", "e", "f", "x"):
+                        self.game.ability({"g": "grow", "e": "split", "f": "float", "x": "fullscreen"}[key])
+                    elif key == "tab" and self.game.split:
+                        self.controlled = 9 if self.controlled == 4 else 4
+                        hypr.focus(self.addresses[self.controlled])
                     elif key in ("space", "return"):
                         if self.game.phase == "ready":
                             self.game.start()
-                        elif self.game.phase != "over":
+                        elif self.game.phase not in ("over", "victory"):
                             self.game.paused = not self.game.paused
                     elif key == "r":
                         self.game.restart()
-                        self.sync()
+                        if args.boss:
+                            self.game.wave = 4
+                        self.controlled = 4
+                        self.release_fire()
                 return True
             return self.guarded(handle)
 
@@ -237,16 +401,117 @@ def main():
             dt = min(now - self.last_tick, .1)
             self.last_tick = now
             if self.ready:
+                if self.rebuilding:
+                    self.rebuild_tick()
+                    return True
+                want_fullscreen = bool(self.game.burst)
+                if want_fullscreen != self.native_fullscreen:
+                    hypr.run(f'hl.dsp.window.fullscreen({{window={self.selector(4)}, mode="fullscreen", action="{"set" if want_fullscreen else "unset"}"}})')
+                    self.native_fullscreen = want_fullscreen
+                if self.native_signature() != self.applied and not self.native_fullscreen:
+                    self.rebuild()
+                    return True
                 if now - self.last_sync > .25:
                     self.sync()
                     self.last_sync = now
-                if not self.away:
+                if not self.away and not args.combat_smoke_test:
                     self.game.advance(dt)
+                    if self.fire_key:
+                        self.fire(self.fire_key)
+                    if self.game.boss == 3 and self.game.playing and not self.native_fullscreen and now - self.last_boss_move > .1:
+                        x, y, w, h = self.arena
+                        bx = x + (w-330) * (.5 + .45*math.sin(now*.8))
+                        by = y + h*.08
+                        hypr.run(f'hl.dsp.window.move({{window={self.selector(0)}, x={int(bx)}, y={int(by)}}})')
+                        self.last_boss_move = now
                 if args.smoke_test:
                     self.smoke(now)
+                elif args.combat_smoke_test:
+                    self.combat_smoke(now)
             for window in self.windows.values():
                 window.queue_draw()
             return not self.closing
+
+        def combat_smoke(self, now):
+            if now - self.smoke_time < .7:
+                return
+            self.smoke_time = now
+            self.sync()
+            stage = self.smoke_stage
+            if stage == 0:
+                self.original_ship = self.addresses[4]
+                self.normal_area = math.prod(self.geometry[4]["size"])
+                self.game.start()
+                self.move("left")
+                self.fire("up")
+                assert self.game.enemies[0] == 2
+                print("PASS controller shooting hits aligned enemy", flush=True)
+                self.last_move = 0
+                self.move("right")
+                assert self.game.ability("grow")
+            elif stage == 1:
+                assert math.prod(self.geometry[4]["size"]) > self.normal_area, self.geometry[4]["size"]
+                print("PASS native ship growth", flush=True)
+                self.game.growth = 0
+                self.game.energy = 100
+                assert self.game.ability("split")
+            elif stage == 2:
+                assert 9 in self.geometry and not self.geometry[9]["floating"]
+                assert self.addresses[4] == self.original_ship
+                self.controlled = 9
+                before = self.positions[9]
+                self.last_move = 0
+                self.move("down")
+                assert self.positions[9] != before
+                print("PASS second ship window split from formation", flush=True)
+                self.game.ability("split")
+                self.game.energy = 100
+                assert self.game.ability("float")
+            elif stage == 3:
+                assert self.geometry[4]["floating"] and 12 in self.geometry
+                before = self.geometry[4]["at"][:]
+                self.move("right")
+                assert self.geometry[4]["at"] != before
+                print("PASS free floating flight with landing sector", flush=True)
+                self.game.flight = 0
+            elif stage == 4:
+                assert not self.geometry[4]["floating"] and 12 not in self.geometry
+                print("PASS ship landed back in tiling tree", flush=True)
+                self.game.energy = 100
+                self.game.ability("fullscreen")
+            elif stage == 5:
+                assert self.geometry[4].get("fullscreen", 0) != 0
+                print("PASS native fullscreen nova", flush=True)
+                self.game.burst = 0
+                self.game.boss = 1
+                self.game.enemies = {0: 18}
+            elif stage == 6:
+                assert self.geometry[4].get("fullscreen", 0) == 0
+                assert math.prod(self.geometry[0]["size"]) > self.normal_area
+                print("PASS giant boss window", flush=True)
+                self.game.damage(0, 18)
+            elif stage == 7:
+                assert {10, 11}.issubset(self.geometry)
+                print("PASS boss fractured into three real windows", flush=True)
+                for index in (0, 10, 11):
+                    self.game.damage(index, 6)
+            elif stage == 8:
+                assert self.geometry[0]["floating"]
+                assert 10 not in self.geometry and 11 not in self.geometry
+                print("PASS detached floating boss core", flush=True)
+                self.game.damage(0, 12)
+            elif stage == 9:
+                assert self.game.phase == "victory"
+                assert not self.geometry[0]["floating"]
+                assert self.addresses[4] == self.original_ship
+                print("PASS victory and persistent ship window identity", flush=True)
+                self.game.restart()
+            else:
+                self.validate_grid()
+                assert len(self.geometry) == 9
+                print("PASS restart restored nine-tile board", flush=True)
+                self.close()
+            self.smoke_stage += 1
 
         def smoke(self, now):
             if now - self.smoke_time < .5:

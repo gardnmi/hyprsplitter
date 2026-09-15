@@ -40,6 +40,8 @@ class GameTests(unittest.TestCase):
         game = Game(3)
         game.start()
         for _ in range(3):
+            if game.kind == "asteroid":
+                game.next_wave()  # Exercise shield depletion with synchronized lasers.
             game.ship = next(iter(game.hazards))
             game.advance(game.remaining)
             game.advance(game.remaining)
