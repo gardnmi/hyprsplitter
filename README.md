@@ -1,3 +1,5 @@
+![Omatari console with Flight School, Chase the Sun, Zero Day, and Road to OMACON cartridges](docs/omatari-console.png)
+
 # Omatari · Hyprsplitter
 
 **Minigames played with real desktop windows, built for Omarchy.**
@@ -132,6 +134,3 @@ Project code is licensed under the [MIT License](LICENSE).
 See [asset provenance](docs/ASSETS.md) for artwork and redistribution status.
 Omatari is an independent project; referenced brands do not imply endorsement.
 
-### Flight School preview
-
-![Flight School gameplay](docs/gameplay.gif)
