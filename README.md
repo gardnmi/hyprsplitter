@@ -11,13 +11,6 @@ This is an early, Omarchy-only release. It uses Python, GTK, Cairo, and Hyprland
 Lua IPC API, tested on Hyprland **0.56.2**. Standalone Hyprland, other compositors,
 and Windows/macOS are not supported.
 
-## Watch the promo
-
-[![Omatari console and game cartridges](docs/media/omatari-promo.jpg)](https://github.com/gardnmi/hyprsplitter/raw/HEAD/docs/media/omatari-promo.mp4)
-
-[Watch or download the 30-second promo](https://github.com/gardnmi/hyprsplitter/raw/HEAD/docs/media/omatari-promo.mp4)
-— all four games, in 1080p with an original retro soundtrack.
-
 ## Setup
 
 From a terminal in an active Omarchy desktop session:

@@ -6,7 +6,6 @@ artwork or trademarks.
 
 | Asset | Current provenance / release status |
 | --- | --- |
-| `docs/media/omatari-promo.mp4` and `.jpg` | Promo assembled from project gameplay recordings and code-rendered title cards, with an original synthesized soundtrack. Third-party artwork visible in gameplay retains its separate rights/status below. |
 | `docs/gameplay.gif` | Existing repository gameplay recording; confirm author and permission to redistribute. |
 | `experiments/platform-lab/assets/omarchy.png` | Omarchy wordmark bitmap used by rally/platform artwork; upstream source and redistribution terms need confirmation. |
 | `experiments/lemur-falls/assets/omacon-2026.png` | User-supplied OMACON 2026 event artwork; source and redistribution permission need confirmation before release. |

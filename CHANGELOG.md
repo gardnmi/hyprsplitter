@@ -8,7 +8,6 @@
 - Add setup diagnostics, isolated test suites, live lifecycle checks, and CI.
 - Document game controls, contribution steps, asset provenance, and release checks.
 - License project code under MIT.
-- Add a 30-second gameplay promo.
 
 This is an Omarchy-only collection using Hyprland's Lua API, tested on 0.56.2.
 See docs/RELEASE.md for validation results and remaining release checks.

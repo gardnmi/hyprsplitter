@@ -15,5 +15,5 @@ dist/
 *.webm
 .DS_Store
 
-# Curated project promo; raw recordings stay ignored.
-!docs/media/omatari-promo.mp4
+# Promotional media stays local.
+docs/media/omatari-promo.*

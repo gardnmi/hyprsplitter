@@ -14,8 +14,7 @@
       `arcade`/`play` scripts.
 - [ ] Review `git status --short` and staged files. The games began as untracked
       experiments: ensure their source/assets are included intentionally.
-- [ ] Exclude raw recordings, benchmark output, caches, and local build products.
-      The curated 30-second promo under `docs/media/` is intentionally included.
+- [ ] Exclude promotional videos, raw recordings, benchmark output, caches, and local build products.
 - [ ] Review final diff, tag the release, and write tested versions/known issues.
 
 Unit tests and headless rendering do not replace testing real Hyprland surfaces.
