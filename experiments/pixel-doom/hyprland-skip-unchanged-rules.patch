@@ -1,0 +1,38 @@
+diff --git i/src/desktop/rule/windowRule/WindowRuleApplicator.cpp w/src/desktop/rule/windowRule/WindowRuleApplicator.cpp
+index 95524e5..1f934dd 100644
+--- i/src/desktop/rule/windowRule/WindowRuleApplicator.cpp
++++ w/src/desktop/rule/windowRule/WindowRuleApplicator.cpp
+@@ -8,6 +8,7 @@
+ #include "desktop/rule/windowRule/WindowRuleEffectContainer.hpp"
+ 
+ #include <string>
++#include <cstdlib>
+ #include <tuple>
+ 
+ using namespace Desktop;
+@@ -551,6 +552,25 @@ void CWindowRuleApplicator::propertiesChanged(std::underlying_type_t<eRuleProper
+     bool                                                        needsRelayout         = false;
+     std::unordered_set<CWindowRuleEffectContainer::storageType> effectsNeedingRecheck = resetProps(props);
+ 
++    // Window population changes repeatedly refresh the whole workspace. For
++    // private pixel tiles, avoid refreshing appearance when no rule can change.
++    // Keep resetProps first: removed rules may still have stored effects to undo.
++    static const bool skipUnchanged = std::getenv("HYPRLAND_PIXEL_DOOM_SKIP_UNCHANGED_RULES") &&
++        std::getenv("HYPRLAND_PIXEL_DOOM_NESTED_ONLY");
++    if (skipUnchanged && props == RULE_PROP_ON_WORKSPACE && effectsNeedingRecheck.empty() &&
++        !m_window->m_isX11 && m_window->m_isFloating && m_window->m_class.starts_with("pixel-doom-")) {
++        const bool hasDependency = std::ranges::any_of(ruleEngine()->rules(), [props](const auto& rule) {
++            return rule->isEnabled() && rule->type() == RULE_TYPE_WINDOW && (rule->getPropertiesMask() & props);
++        }) || std::ranges::any_of(m_execRules, [props](const auto& rule) { return rule->getPropertiesMask() & props; });
++        if (!hasDependency) {
++            static uint64_t skipped = 0;
++            if (++skipped == 1 || skipped % 1048576 == 0)
++                Log::logger->log(Log::WARN, "PD_SKIP_UNCHANGED_RULES skipped={}", skipped);
++            Event::bus()->m_events.window.updateRules.emit(m_window.lock());
++            return;
++        }
++    }
++
+     for (const auto& r : ruleEngine()->rules()) {
+         if (r->type() != RULE_TYPE_WINDOW)
+             continue;

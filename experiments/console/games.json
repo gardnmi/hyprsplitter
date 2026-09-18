@@ -1,0 +1,6 @@
+[
+  {"id":"space","title":"FLIGHT SCHOOL","subtitle":"SPACE / WINDOW MANEUVERS","accent":"cyan","entry":"hyprsplitter.py"},
+  {"id":"quattro","title":"CHASE THE SUN","subtitle":"QUATTRO / SUNSET RUN","accent":"orange","entry":"experiments/quattro-jump/main.py"},
+  {"id":"zero","title":"ZERO DAY","subtitle":"OMARCHY / DEFEND THE INSTALL","accent":"blue","entry":"experiments/omarchy-wars/main.py"},
+  {"id":"tux","title":"ROAD TO OMACON","subtitle":"TUX / GREAT ESCAPE","accent":"bright_green","entry":"experiments/lemur-falls/main.py"}
+]

@@ -1,0 +1,63 @@
+diff --git i/src/layout/target/WindowTarget.cpp w/src/layout/target/WindowTarget.cpp
+index 461ce09..99d3079 100644
+--- i/src/layout/target/WindowTarget.cpp
++++ w/src/layout/target/WindowTarget.cpp
+@@ -15,6 +15,7 @@
+ #include "../../managers/fullscreen/FullscreenController.hpp"
+ 
+ #include <hyprutils/utils/ScopeGuard.hpp>
++#include <cstdlib>
+ 
+ using namespace Hyprutils::Utils;
+ using namespace Layout;
+@@ -52,6 +53,20 @@ void CWindowTarget::updatePos(uint8_t flags) {
+     if (!m_space || !m_space->workspace())
+         return;
+ 
++    // Floating pixel tiles do not use tiled work-area or workspace gap rules.
++    // Keep damage, client configure, and decoration updates identical below.
++    static const bool fastFloating = std::getenv("HYPRLAND_PIXEL_DOOM_FAST_FLOATING") &&
++        std::getenv("HYPRLAND_PIXEL_DOOM_NESTED_ONLY");
++    if (fastFloating && validMapped(m_window) && !m_window->m_isX11 &&
++        m_window->m_class.starts_with("pixel-doom-") && floating() &&
++        !Fullscreen::controller()->isFullscreen(m_window.lock())) {
++        m_window->setBox(m_box.logicalBox);
++        if (CONFIGURECLIENT)
++            m_window->sendWindowSize();
++        m_window->updateWindowDecos();
++        return;
++    }
++
+     const auto PMONITOR         = m_space->workspace()->m_monitor;
+     const auto PWORKSPACE       = m_space->workspace();
+     const auto MONITOR_WORKAREA = m_space->workArea();
+diff --git i/src/managers/fullscreen/FullscreenController.cpp w/src/managers/fullscreen/FullscreenController.cpp
+index e55a944..28849de 100644
+--- i/src/managers/fullscreen/FullscreenController.cpp
++++ w/src/managers/fullscreen/FullscreenController.cpp
+@@ -17,6 +17,7 @@
+ #include "../../render/Renderer.hpp"
+ #include "../../debug/log/Logger.hpp"
+ #include <optional>
++#include <cstdlib>
+ 
+ using namespace Fullscreen;
+ 
+@@ -523,6 +524,17 @@ WP<IFullscreenHandler> CFullscreenController::getFsHandler(const PHLWINDOW windo
+     if (!window)
+         return nullptr;
+ 
++    // Floating windows select the same handler for both layoutHandled values.
++    // Avoid recursively resolving both handlers just to arrive at that result.
++    static const bool fastFloating = std::getenv("HYPRLAND_PIXEL_DOOM_FAST_FLOATING") &&
++        std::getenv("HYPRLAND_PIXEL_DOOM_NESTED_ONLY");
++    if (fastFloating && window->m_isFloating && !window->m_isX11 && window->m_class.starts_with("pixel-doom-")) {
++        const auto handlers = getFsHandlersForWorkspace(window->m_workspace);
++        if (!handlers.TILED_FS_HANDLER || !handlers.TILED_DEFAULT_FS_HANDLER || !handlers.FLOATING_FS_HANDLER)
++            return nullptr;
++        return handlers.FLOATING_FS_HANDLER;
++    }
++
+     if (!layoutHandled.has_value())
+         layoutHandled = layoutManagedFS(window);
+ 

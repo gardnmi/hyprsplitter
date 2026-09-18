@@ -1,0 +1,60 @@
+diff --git i/src/config/lua/bindings/LuaBindingsDispatchers.cpp w/src/config/lua/bindings/LuaBindingsDispatchers.cpp
+index 748b641..e7da92f 100644
+--- i/src/config/lua/bindings/LuaBindingsDispatchers.cpp
++++ w/src/config/lua/bindings/LuaBindingsDispatchers.cpp
+@@ -14,6 +14,9 @@
+ #include "../../../devices/IKeyboard.hpp"
+ #include "../../../desktop/rule/windowRule/WindowRule.hpp"
+ #include "config/shared/actions/ConfigActions.hpp"
++#include "../../../layout/LayoutManager.hpp"
++#include <cstdlib>
++#include <cmath>
+ 
+ using namespace Config;
+ using namespace Config::Lua;
+@@ -642,6 +645,36 @@ static int dsp_move(lua_State* L) {
+     return Internal::checkResult(L, CA::move(value, lua_toboolean(L, lua_upvalueindex(3)), Internal::windowFromUpval(L, 4)));
+ }
+ 
++// Private pixel-terminal experiment: one geometry update instead of resize + move.
++static int dsp_pixelGeometry(lua_State* L) {
++    auto window = Internal::windowFromUpval(L, 5);
++    if (!window || !*window || !(*window)->m_isFloating || (*window)->m_isX11 ||
++        !(*window)->m_class.starts_with("pixel-doom-") || Fullscreen::controller()->isFullscreen(*window))
++        return Internal::dispatcherError(L, "pixel_geometry requires a floating pixel-doom window", ERR, C_INVARG);
++    const CBox box{lua_tonumber(L, lua_upvalueindex(1)), lua_tonumber(L, lua_upvalueindex(2)),
++                   lua_tonumber(L, lua_upvalueindex(3)), lua_tonumber(L, lua_upvalueindex(4))};
++    g_layoutManager->setTargetGeom(box, (*window)->layoutTarget());
++    if ((*window)->size(Desktop::View::IGeometric::GEOMETRIC_GOAL).x > 1 &&
++        (*window)->size(Desktop::View::IGeometric::GEOMETRIC_GOAL).y > 1)
++        (*window)->setHidden(false);
++    return 0;
++}
++
++static int hlWindowPixelGeometry(lua_State* L) {
++    if (!lua_istable(L, 1))
++        return Internal::configError(L, "pixel_geometry expects { x, y, width, height, window }");
++    auto x = Internal::tableOptNum(L, 1, "x"), y = Internal::tableOptNum(L, 1, "y");
++    auto w = Internal::tableOptNum(L, 1, "width"), h = Internal::tableOptNum(L, 1, "height");
++    if (!x || !y || !w || !h || !std::isfinite(*x) || !std::isfinite(*y) ||
++        !std::isfinite(*w) || !std::isfinite(*h) || *w < 1 || *h < 1)
++        return Internal::configError(L, "pixel_geometry requires finite coordinates and positive sizes");
++    lua_pushnumber(L, *x); lua_pushnumber(L, *y);
++    lua_pushnumber(L, *w); lua_pushnumber(L, *h);
++    Internal::pushWindowUpval(L, 1);
++    lua_pushcclosure(L, dsp_pixelGeometry, 5);
++    return 1;
++}
++
+ static int dsp_pinWindow(lua_State* L) {
+     return Internal::checkResult(L, CA::pinWindow(sc<CA::eTogglableAction>((int)lua_tonumber(L, lua_upvalueindex(1))), Internal::windowFromUpval(L, 2)));
+ }
+@@ -1385,6 +1418,8 @@ void Internal::registerDispatcherBindings(lua_State* L) {
+         Internal::setFn(L, "deny_from_group", hlWindowDenyFromGroup);
+         Internal::setFn(L, "drag", hlWindowDrag);
+         Internal::setFn(L, "resize", hlWindowResize);
++        if (std::getenv("HYPRLAND_PIXEL_DOOM_NESTED_ONLY") && std::getenv("HYPRLAND_PIXEL_DOOM_COMBINED_GEOMETRY"))
++            Internal::setFn(L, "pixel_geometry", hlWindowPixelGeometry);
+         lua_setfield(L, -2, "window");
+ 
+         lua_newtable(L);

@@ -1,0 +1,73 @@
+diff --git i/src/render/gl/GLTexture.cpp w/src/render/gl/GLTexture.cpp
+index 9483af9..7847812 100644
+--- i/src/render/gl/GLTexture.cpp
++++ w/src/render/gl/GLTexture.cpp
+@@ -4,11 +4,14 @@
+ #include "../../helpers/Format.hpp"
+ #include "../Texture.hpp"
+ #include <cstring>
++#include <cstdlib>
+ #include <hyprgraphics/egl/Egl.hpp>
+ 
+ using namespace Hyprgraphics::Egl;
+ using namespace Render::GL;
+ 
++static uint64_t pixelDoomDeferredUpdates = 0, pixelDoomMaterializedUpdates = 0;
++
+ CGLTexture::CGLTexture(bool opaque) {
+     m_opaque = opaque;
+ }
+@@ -124,6 +127,22 @@ void CGLTexture::update(uint32_t drmFormat, uint8_t* pixels, uint32_t stride, co
+     if (damage.empty())
+         return;
+ 
++    static const bool deferPixels = std::getenv("HYPRLAND_PIXEL_DOOM_DEFER_TEXTURE") &&
++        std::getenv("HYPRLAND_PIXEL_DOOM_BATCH_DRAW") && std::getenv("HYPRLAND_PIXEL_DOOM_NESTED_ONLY");
++    if (deferPixels && !m_pixelDoomUploading && m_isSynchronous && m_size == Vector2D{1,1} && pixels && stride >= 4 &&
++        (drmFormat == DRM_FORMAT_ARGB8888 || drmFormat == DRM_FORMAT_XRGB8888)) {
++        uint32_t color; std::memcpy(&color, pixels, 4);
++        if (drmFormat == DRM_FORMAT_XRGB8888 || (color >> 24) == 255) {
++            m_pixelDoomDeferred = SPixelDoomDeferred{drmFormat, color};
++            if (m_keepDataCopy) { m_dataCopy.resize(4); std::memcpy(m_dataCopy.data(), pixels, 4); }
++            ++pixelDoomDeferredUpdates;
++            if (pixelDoomDeferredUpdates == 1 || pixelDoomDeferredUpdates % 65536 == 0)
++                Log::logger->log(Log::WARN, "PD_DEFER_TEXTURE deferred={} materialized={}", pixelDoomDeferredUpdates, pixelDoomMaterializedUpdates);
++            return;
++        }
++    }
++    // A newer ordinary update supersedes any saved solid color.
++    m_pixelDoomDeferred.reset();
+     g_pHyprOpenGL->makeEGLCurrent();
+ 
+     const auto format = getPixelFormatFromDRM(drmFormat);
+@@ -175,6 +194,16 @@ void CGLTexture::allocate(const Vector2D& size, uint32_t drmFormat) {
+ }
+ 
+ void CGLTexture::bind() {
++    // Every ordinary texture draw binds first. Materialize only on fallback;
++    // the batched solid-color renderer never binds these individual textures.
++    if (m_pixelDoomDeferred) {
++        auto deferred = *m_pixelDoomDeferred;
++        m_pixelDoomDeferred.reset();
++        m_pixelDoomUploading = true;
++        ++pixelDoomMaterializedUpdates;
++        update(deferred.format, reinterpret_cast<uint8_t*>(&deferred.color), 4, CRegion{CBox{0,0,1,1}});
++        m_pixelDoomUploading = false;
++    }
+     GLCALL(glBindTexture(m_target, m_texID));
+ }
+ 
+diff --git i/src/render/gl/GLTexture.hpp w/src/render/gl/GLTexture.hpp
+index e29966a..493881f 100644
+--- i/src/render/gl/GLTexture.hpp
++++ w/src/render/gl/GLTexture.hpp
+@@ -31,6 +31,9 @@ namespace Render::GL {
+ 
+       private:
+         void* m_eglImage = nullptr;
++        struct SPixelDoomDeferred { uint32_t format, color; };
++        std::optional<SPixelDoomDeferred> m_pixelDoomDeferred;
++        bool m_pixelDoomUploading = false;
+ 
+         enum eTextureParam : uint8_t {
+             TEXTURE_PAR_WRAP_S = 0,

@@ -1,0 +1,222 @@
+diff --git i/src/protocols/core/Compositor.cpp w/src/protocols/core/Compositor.cpp
+index ddc034d..ffaf025 100644
+--- i/src/protocols/core/Compositor.cpp
++++ w/src/protocols/core/Compositor.cpp
+@@ -5,6 +5,8 @@
+ #include "../types/WLBuffer.hpp"
+ #include <algorithm>
+ #include <array>
++#include <cstring>
++#include <cstdlib>
+ #include <ranges>
+ #include "Subcompositor.hpp"
+ #include "../Viewporter.hpp"
+@@ -629,6 +631,18 @@ void CWLSurfaceResource::commitState(SSurfaceState& state) {
+     m_current.updateFrom(state);
+ 
+     if (m_current.buffer) {
++        static const bool pixelBatch = std::getenv("HYPRLAND_PIXEL_DOOM_BATCH_DRAW") && std::getenv("HYPRLAND_PIXEL_DOOM_NESTED_ONLY");
++        if (pixelBatch) {
++            m_pixelDoomColor.reset();
++            if (m_current.bufferSize == Vector2D{1,1} && m_current.buffer->shm().success) {
++                auto [bytes, format, size] = m_current.buffer->beginDataPtr(0);
++                if (bytes && size >= 4 && (format == WL_SHM_FORMAT_ARGB8888 || format == WL_SHM_FORMAT_XRGB8888)) {
++                    uint32_t color; std::memcpy(&color,bytes,4);
++                    if (format == WL_SHM_FORMAT_XRGB8888 || (color >> 24) == 255) m_pixelDoomColor = color;
++                }
++                m_current.buffer->endDataPtr();
++            }
++        }
+         if (m_current.buffer->isSynchronous())
+             m_current.updateSynchronousTexture(lastTexture);
+ 
+@@ -795,6 +809,10 @@ void CWLSurfaceResource::updateCursorShm(CRegion damage) {
+ void CWLSurfaceResource::presentFeedback(const Time::steady_tp& when, PHLMONITOR pMonitor, bool discarded) {
+     frame(when);
+ 
++    static const bool skipEmpty = std::getenv("HYPRLAND_PIXEL_DOOM_BATCH_DRAW") && std::getenv("HYPRLAND_PIXEL_DOOM_NESTED_ONLY");
++    if (skipEmpty && m_current.presentationFeedbacks.empty())
++        return;
++
+     auto FEEDBACK = makeUnique<CQueuedPresentationData>(m_self.lock(), std::move(m_current.presentationFeedbacks));
+     FEEDBACK->attachMonitor(pMonitor);
+     if (discarded)
+diff --git i/src/protocols/core/Compositor.hpp w/src/protocols/core/Compositor.hpp
+index 2f71d25..65df64a 100644
+--- i/src/protocols/core/Compositor.hpp
++++ w/src/protocols/core/Compositor.hpp
+@@ -103,6 +103,7 @@ class CWLSurfaceResource {
+         CSignalT<PHLMONITOR>                leave;
+     } m_events;
+ 
++    std::optional<uint32_t>                 m_pixelDoomColor;
+     SSurfaceState                          m_current;
+     SSurfaceState                          m_pending;
+     CSurfaceStateQueue                     m_stateQueue;
+diff --git i/src/render/PixelDoomBatch.hpp w/src/render/PixelDoomBatch.hpp
+new file mode 100644
+index 0000000..7cef964
+--- /dev/null
++++ w/src/render/PixelDoomBatch.hpp
+@@ -0,0 +1,129 @@
++#pragma once
++// Private nested-compositor experiment. Real window/surface objects and
++// presentation feedback are retained; contiguous opaque 1x1 surfaces share draws.
++#include "../desktop/view/Popup.hpp"
++#include <cstdlib>
++#include "../protocols/core/Subcompositor.hpp"
++
++namespace PixelDoom {
++inline bool enabled() {
++    static const bool value = std::getenv("HYPRLAND_PIXEL_DOOM_BATCH_DRAW") && std::getenv("HYPRLAND_PIXEL_DOOM_NESTED_ONLY");
++    return value;
++}
++inline GLuint program = 0, vao = 0, vbo = 0;
++inline bool ensureProgram() {
++    if (program) return true;
++    const char* vs = R"(#version 300 es
++precision highp float;
++layout(location=0) in vec2 position;
++layout(location=1) in vec3 color;
++uniform mat3 projection;
++out vec3 vertexColor;
++void main() { vec3 p=projection*vec3(position,1.0); gl_Position=vec4(p.xy,0.0,1.0); vertexColor=color; }
++)";
++    const char* fs = R"(#version 300 es
++precision highp float;
++in vec3 vertexColor;
++out vec4 fragColor;
++void main() { fragColor=vec4(vertexColor,1.0); }
++)";
++    auto compile = [](GLenum type, const char* source) {
++        GLuint shader=glCreateShader(type); glShaderSource(shader,1,&source,nullptr); glCompileShader(shader);
++        GLint ok=0; glGetShaderiv(shader,GL_COMPILE_STATUS,&ok);
++        if (!ok) { char error[2048]; glGetShaderInfoLog(shader,sizeof(error),nullptr,error); Log::logger->log(Log::ERR,"PD shader: {}",error); glDeleteShader(shader); return GLuint{0}; }
++        return shader;
++    };
++    GLuint vert=compile(GL_VERTEX_SHADER,vs), frag=compile(GL_FRAGMENT_SHADER,fs);
++    if (!vert || !frag) { if(vert)glDeleteShader(vert); if(frag)glDeleteShader(frag); return false; }
++    GLuint p=glCreateProgram(); glAttachShader(p,vert); glAttachShader(p,frag); glLinkProgram(p);
++    glDeleteShader(vert); glDeleteShader(frag);
++    GLint ok=0; glGetProgramiv(p,GL_LINK_STATUS,&ok);
++    if (!ok) { glDeleteProgram(p); return false; }
++    program=p; glGenVertexArrays(1,&vao); glGenBuffers(1,&vbo);
++    Log::logger->log(Log::WARN,"pixel-doom batched surface drawing active (nested experiment)");
++    return true;
++}
++class CBatch : public IPassElement {
++  public:
++    struct SCell { CBox box; uint32_t color; SP<CWLSurfaceResource> surface; };
++    struct SVertex { float x,y,r,g,b; };
++    std::vector<SCell> cells;
++    PHLMONITOR monitor;
++    Time::steady_tp when;
++    bool needsLiveBlur() override { return false; }
++    bool needsPrecomputeBlur() override { return false; }
++    const char* passName() override { return "PixelDoomBatch"; }
++    ePassElementType type() override { return EK_CUSTOM; }
++    bool undiscardable() override { return true; }
++    bool disableSimplification() override { return true; }
++    std::vector<UP<IPassElement>> draw() override {
++        if (cells.empty()) return {};
++        auto& renderer=*g_pHyprRenderer;
++        std::vector<SVertex> vertices; vertices.reserve(cells.size()*6);
++        for (const auto& c:cells) {
++            const auto color=renderer.getConvertedColor(CHyprColor(((c.color>>16)&255)/255.0,((c.color>>8)&255)/255.0,(c.color&255)/255.0,1.0));
++            const auto push=[&](float x,float y) { vertices.push_back({x,y,float(color.r),float(color.g),float(color.b)}); };
++            float x=c.box.x, y=c.box.y, r=c.box.x+c.box.w, b=c.box.y+c.box.h;
++            push(x,y);push(r,y);push(x,b);push(x,b);push(r,y);push(r,b);
++        }
++        GLint oldProgram,oldVAO,oldBuffer,scissor[4];
++        glGetIntegerv(GL_CURRENT_PROGRAM,&oldProgram);glGetIntegerv(GL_VERTEX_ARRAY_BINDING,&oldVAO);
++        glGetIntegerv(GL_ARRAY_BUFFER_BINDING,&oldBuffer);glGetIntegerv(GL_SCISSOR_BOX,scissor);
++        const bool wasScissor=glIsEnabled(GL_SCISSOR_TEST), wasBlend=glIsEnabled(GL_BLEND);
++        glUseProgram(program);glBindVertexArray(vao);glBindBuffer(GL_ARRAY_BUFFER,vbo);
++        glBufferData(GL_ARRAY_BUFFER,vertices.size()*sizeof(SVertex),vertices.data(),GL_STREAM_DRAW);
++        glEnableVertexAttribArray(0);glEnableVertexAttribArray(1);
++        glVertexAttribPointer(0,2,GL_FLOAT,GL_FALSE,sizeof(SVertex),nullptr);
++        glVertexAttribPointer(1,3,GL_FLOAT,GL_FALSE,sizeof(SVertex),reinterpret_cast<void*>(2*sizeof(float)));
++        auto matrix=renderer.projectBoxToTarget(CBox{0,0,1,1}).transpose().getMatrix();
++        glUniformMatrix3fv(glGetUniformLocation(program,"projection"),1,GL_FALSE,matrix.data());
++        glDisable(GL_BLEND);glEnable(GL_SCISSOR_TEST);
++        renderer.m_renderData.damage.forEachRect([&](const auto& rect) {
++            glScissor(rect.x1,rect.y1,rect.x2-rect.x1,rect.y2-rect.y1);
++            glDrawArrays(GL_TRIANGLES,0,vertices.size());
++        });
++        glScissor(scissor[0],scissor[1],scissor[2],scissor[3]);
++        if(!wasScissor)glDisable(GL_SCISSOR_TEST);if(wasBlend)glEnable(GL_BLEND);
++        glBindVertexArray(oldVAO);glBindBuffer(GL_ARRAY_BUFFER,oldBuffer);glUseProgram(oldProgram);
++        if (!renderer.m_bBlockSurfaceFeedback)
++            for (const auto& c:cells) c.surface->presentFeedback(when,monitor);
++        return {};
++    }
++};
++inline CBatch* current=nullptr;
++inline CRenderPass* owner=nullptr;
++inline Time::steady_tp stamp;
++inline bool append(PHLWINDOW window,PHLMONITOR monitor,const Time::steady_tp& when,Render::eRenderPassMode mode,bool ignorePosition,bool standalone) {
++    if (!enabled() || ignorePosition || standalone || g_pHyprRenderer->m_bRenderingSnapshot ||
++        g_pHyprRenderer->type()!=Render::IHyprRenderer::RT_GL || monitor->m_transform!=WL_OUTPUT_TRANSFORM_NORMAL || monitor->m_enabled10bit ||
++        !g_pHyprRenderer->m_renderData.renderModif.modifs.empty() || g_pHyprRenderer->m_renderData.projectionType!=Render::RPT_MONITOR ||
++        !window->m_class.starts_with("pixel-doom-") || !window->m_isFloating || window->m_isX11 ||
++        !window->m_transformers.empty() || window->effectiveAlpha()!=1.F || window->rounding()!=0 || window->getRealBorderSize()!=0 ||
++        window->positionAnimation()->isBeingAnimated() || window->sizeAnimation()->isBeingAnimated() ||
++        window->m_workspace->m_renderOffset->value()!=Vector2D{} || window->m_workspace->m_alpha->value()!=1.F ||
++        (window->m_popupHead && window->m_popupHead->popupTreeCount()>0)) return false;
++    const auto wl=window->wlSurface();const auto surface=wl->resource();
++    if (!surface || !surface->m_pixelDoomColor || wl->m_alphaModifier!=1.F || wl->m_overallOpacity!=1.F)
++        return false;
++    for (const auto& weakSub:surface->m_subsurfaces) {
++        auto sub=weakSub.lock();
++        if (sub && sub->m_surface && sub->m_surface->m_mapped) return false;
++    }
++    static auto blur=CConfigValue<Config::INTEGER>("decoration:blur:enabled");
++    static auto shadow=CConfigValue<Config::INTEGER>("decoration:shadow:enabled");
++    if (*blur || *shadow) return false;
++    if (mode==Render::RENDER_PASS_POPUP) return true;
++    if (!ensureProgram()) return false;
++    auto& pass=g_pHyprRenderer->currentPass();
++    if (!current || owner!=&pass || stamp!=when || current->monitor!=monitor) {
++        auto batch=makeUnique<CBatch>();batch->monitor=monitor;batch->when=when;
++        auto ptr=batch.get();g_pHyprRenderer->addPassElement(std::move(batch));
++        current=ptr;owner=&pass;stamp=when;
++    }
++    auto pos=window->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT)+window->m_floatingOffset-monitor->m_position;
++    auto size=window->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
++    CBox box{pos,size};box.scale(monitor->m_scale).round();
++    current->cells.push_back({box,*surface->m_pixelDoomColor,surface});
++    return true;
++}
++}
+diff --git i/src/render/Renderer.cpp w/src/render/Renderer.cpp
+index 249f084..a02fa19 100644
+--- i/src/render/Renderer.cpp
++++ w/src/render/Renderer.cpp
+@@ -76,6 +76,8 @@ using namespace NColorManagement;
+ using namespace Desktop::View;
+ using namespace Render;
+ 
++#include "PixelDoomBatch.hpp"
++
+ extern "C" {
+ #include <xf86drm.h>
+ }
+@@ -533,6 +535,7 @@ void IHyprRenderer::bindBackOnMain() {
+ }
+ 
+ void IHyprRenderer::addPassElement(UP<IPassElement>&& element) {
++    PixelDoom::current = nullptr;
+     currentPass().add(std::move(element));
+ }
+ 
+@@ -556,6 +559,10 @@ void IHyprRenderer::renderWindow(PHLWINDOW pWindow, PHLMONITOR pMonitor, const T
+     if (!pWindow->m_isMapped)
+         return;
+ 
++    if (PixelDoom::append(pWindow,pMonitor,time,mode,ignorePosition,standalone))
++        return;
++    PixelDoom::current = nullptr;
++
+     TRACY_GPU_ZONE("RenderWindow");
+ 
+     const auto  PWORKSPACE = pWindow->m_workspace;

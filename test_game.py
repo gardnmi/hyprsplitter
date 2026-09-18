@@ -202,3 +202,22 @@ class Lessons(unittest.TestCase):
 
 if __name__=='__main__':
     unittest.main()
+
+
+class NativeCloseTests(unittest.TestCase):
+    def test_other_lessons_close_instead_of_rebuilding(self):
+        for mission, *_ in MISSIONS:
+            if mission == 'shoot':continue
+            g=Game(mission)
+            for state in ('briefing','active','complete'):
+                g.state=state
+                for actor in (0,1,4):self.assertTrue(g.close_exits(actor))
+
+    def test_target_practice_keeps_shooting_but_ship_always_quits(self):
+        g=Game('shoot')
+        self.assertTrue(g.close_exits(0))
+        g.start()
+        self.assertTrue(g.close_exits(4))
+        for actor in TARGETS | FRIENDLIES:self.assertFalse(g.close_exits(actor))
+        self.assertTrue(g.close_target(0))
+        g.paused=True;self.assertTrue(g.close_exits(1))

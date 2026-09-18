@@ -144,6 +144,11 @@ class Game:
                 self.blast = 0
                 self.say('SECRET WEAPON RELEASED')
 
+    def close_exits(self, actor):
+        """Native close quits except for live target-practice interactions."""
+        return (actor == 4 or self.mission != 'shoot' or
+                self.state != 'active' or self.paused)
+
     def close_target(self, actor):
         if self.mission != 'shoot' or self.state != 'active' or self.paused or actor not in self.enemies:
             return False

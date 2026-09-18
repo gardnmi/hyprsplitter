@@ -1,0 +1,163 @@
+diff --git i/render.c w/render.c
+index 2bc4414..98cb23d 100644
+--- i/render.c
++++ w/render.c
+@@ -3321,11 +3321,133 @@ dirty_cursor(struct terminal *term)
+     row->dirty = true;
+ }
+ 
++/* Sample only an explicitly selected real pixel window. No terminal pointer is
++ * retained by feedback callbacks, so destroying a window cannot leave one stale. */
++struct pixel_doom_feedback { uint64_t commit_ns; };
++static void pixel_doom_presented(void *data, struct wp_presentation_feedback *feedback,
++    uint32_t hi, uint32_t lo, uint32_t ns, uint32_t refresh, uint32_t seq_hi, uint32_t seq_lo, uint32_t flags)
++{
++    struct pixel_doom_feedback *ctx = data;
++    uint64_t presented_ns = (((uint64_t)hi << 32) | lo) * 1000000000ull + ns;
++    LOG_WARN("PD_PRESENT time_ns=%llu latency_us=%llu refresh_ns=%u flags=%u",
++        (unsigned long long)presented_ns,
++        (unsigned long long)((presented_ns >= ctx->commit_ns ? presented_ns - ctx->commit_ns : 0) / 1000), refresh, flags);
++    wp_presentation_feedback_destroy(feedback);
++    free(ctx);
++}
++static void pixel_doom_discarded(void *data, struct wp_presentation_feedback *feedback)
++{
++    LOG_WARN("PD_PRESENT discarded");
++    wp_presentation_feedback_destroy(feedback);
++    free(data);
++}
++static const struct wp_presentation_feedback_listener pixel_doom_feedback_listener = {
++    .sync_output = sync_output, .presented = pixel_doom_presented, .discarded = pixel_doom_discarded,
++};
++static void pixel_doom_sample(struct terminal *term)
++{
++    const char *wanted = getenv("FOOT_PIXEL_DOOM_SAMPLE_TITLE");
++    if (!wanted || !term->window_title || strcmp(wanted, term->window_title) || !term->wl->presentation)
++        return;
++    struct timespec now;
++    clock_gettime(term->wl->presentation_clock_id, &now);
++    struct wp_presentation_feedback *feedback = wp_presentation_feedback(term->wl->presentation, term->window->surface.surf);
++    if (!feedback) return;
++    struct pixel_doom_feedback *ctx = xmalloc(sizeof(*ctx));
++    ctx->commit_ns = (uint64_t)now.tv_sec * 1000000000ull + now.tv_nsec;
++    wp_presentation_feedback_add_listener(feedback, &pixel_doom_feedback_listener, ctx);
++}
++
++/* Opt-in experiment: preserve real PTYs and VT parsing, but represent an
++ * empty opaque terminal with a 1x1 buffer stretched by wp_viewporter.
++ * Any text, cursor, graphics or styled background takes the normal path. */
++static bool
++pixel_doom_render(struct terminal *term)
++{
++    static int enabled = -1;
++    if (enabled < 0) enabled = getenv("FOOT_PIXEL_DOOM") != NULL;
++    if (!enabled || !term->window->surface.viewport || !term->hide_cursor ||
++        term->reverse || term->is_searching || term->colors.alpha != 0xffff ||
++        term->render.workers.count != 0 || term->render.preapply_last_frame_damage ||
++        term->grid->view != term->grid->offset ||
++        tll_length(term->grid->sixel_images) || urls_mode_is_active(term))
++        return false;
++    if (shm_chain_bit_depth(term->render.chains.grid) != SHM_BITS_8)
++        return false;
++    for (int r = 0; r < term->rows; r++) {
++        struct row *row = grid_row_in_view(term->grid, r);
++        for (int c = 0; c < term->cols; c++) {
++            const struct cell *cell = &row->cells[c];
++            if (cell->wc || cell->attrs.bg_src != COLOR_DEFAULT ||
++                cell->attrs.reverse || cell->attrs.selected ||
++                cell->attrs.underline || cell->attrs.strikethrough)
++                return false;
++        }
++    }
++    static bool logged = false;
++    if (!logged) { LOG_WARN("pixel-doom: single-pixel background path active"); logged = true; }
++    struct wl_buffer *wl_buf;
++    /* Immutable protocol buffers can be shared by multiple surfaces. A bounded
++     * process-wide cache preserves exact colors; collisions evict old entries.
++     * Destroying a wl_buffer does not invalidate already committed content. */
++    if (getenv("FOOT_PIXEL_DOOM_CACHE") && term->wl->single_pixel_manager) {
++        static struct { uint32_t color; struct wl_buffer *buf; } cache[4096];
++        uint32_t color = term->colors.bg;
++        size_t slot = (color * 2654435761u) >> 20;
++        if (!cache[slot].buf || cache[slot].color != color) {
++            if (cache[slot].buf) wl_buffer_destroy(cache[slot].buf);
++            cache[slot].color = color;
++            cache[slot].buf = wp_single_pixel_buffer_manager_v1_create_u32_rgba_buffer(
++                term->wl->single_pixel_manager,
++                ((color >> 16) & 255) * 0x01010101u,
++                ((color >> 8) & 255) * 0x01010101u,
++                (color & 255) * 0x01010101u, 0xffffffffu);
++        }
++        wl_buf = cache[slot].buf;
++        if (term->render.last_buf) shm_unref(term->render.last_buf);
++        term->render.last_buf = NULL;
++    } else {
++        struct buffer *buf = shm_get_buffer(term->render.chains.grid, 1, 1);
++        if (term->render.last_buf) shm_unref(term->render.last_buf);
++        term->render.last_buf = buf;
++        shm_addref(buf);
++        buf->age = 0;
++        *(uint32_t *)buf->data = 0xff000000u | term->colors.bg;
++        wl_buf = buf->wl_buf;
++    }
++    tll_free(term->grid->scroll_damage);
++    if (!getenv("FOOT_PIXEL_DOOM_NO_CALLBACK")) {
++        term->window->frame_callback = wl_surface_frame(term->window->surface.surf);
++        wl_callback_add_listener(term->window->frame_callback, &frame_listener, term);
++    }
++    const int width = roundf(term->width / term->scale);
++    const int height = roundf(term->height / term->scale);
++    const bool cache_geometry = getenv("FOOT_PIXEL_DOOM_CACHE_GEOMETRY") != NULL;
++    if (!cache_geometry || !term->window->pixel_doom_geometry_valid) {
++        wl_surface_set_buffer_scale(term->window->surface.surf, 1);
++    }
++    if (!cache_geometry || !term->window->pixel_doom_geometry_valid ||
++        term->window->pixel_doom_width != width || term->window->pixel_doom_height != height) {
++        wp_viewport_set_destination(term->window->surface.viewport, width, height);
++    }
++    term->window->pixel_doom_width = width;
++    term->window->pixel_doom_height = height;
++    term->window->pixel_doom_geometry_valid = cache_geometry;
++    wl_surface_damage_buffer(term->window->surface.surf, 0, 0, INT32_MAX, INT32_MAX);
++    wl_surface_attach(term->window->surface.surf, wl_buf, 0, 0);
++    pixel_doom_sample(term);
++    wl_surface_commit(term->window->surface.surf);
++    return true;
++}
++
+ static void
+ grid_render(struct terminal *term)
+ {
+     if (term->shutdown.in_progress)
+         return;
++    if (pixel_doom_render(term))
++        return;
++    term->window->pixel_doom_geometry_valid = false;
+ 
+     struct timespec start_time;
+     struct timespec start_wait_preapply = {0}, stop_wait_preapply = {0};
+diff --git i/wayland.c w/wayland.c
+index f15c168..39c1de7 100644
+--- i/wayland.c
++++ w/wayland.c
+@@ -2565,6 +2565,7 @@ wayl_surface_scale(const struct wl_window *win, const struct wayl_surface *surf,
+ void
+ wayl_win_scale(struct wl_window *win, const struct buffer *buf)
+ {
++    win->pixel_doom_geometry_valid = false;
+     const struct terminal *term = win->term;
+     const float scale = term->scale;
+ 
+diff --git i/wayland.h w/wayland.h
+index 11a3836..09a469a 100644
+--- i/wayland.h
++++ w/wayland.h
+@@ -380,6 +380,8 @@ struct wl_window {
+     bool unmapped;
+     float scale;
+     int preferred_buffer_scale;
++    bool pixel_doom_geometry_valid;
++    int pixel_doom_width, pixel_doom_height;
+ 
+     struct zxdg_toplevel_decoration_v1 *xdg_toplevel_decoration;
+ 

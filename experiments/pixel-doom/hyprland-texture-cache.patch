@@ -1,0 +1,57 @@
+diff --git i/src/protocols/types/SurfaceState.cpp w/src/protocols/types/SurfaceState.cpp
+index 80de06d..92a44e2 100644
+--- i/src/protocols/types/SurfaceState.cpp
++++ w/src/protocols/types/SurfaceState.cpp
+@@ -3,6 +3,9 @@
+ #include "protocols/types/Buffer.hpp"
+ #include "render/Renderer.hpp"
+ #include "render/Texture.hpp"
++#include <cstdlib>
++#include <cstring>
++#include <unordered_map>
+ 
+ Vector2D SSurfaceState::sourceSize() {
+     if UNLIKELY (!texture)
+@@ -46,11 +49,41 @@ CRegion SSurfaceState::effectiveInputRegion() const {
+ }
+ 
+ void SSurfaceState::updateSynchronousTexture(SP<Render::ITexture> lastTexture) {
++    static const bool pixelCache = std::getenv("HYPRLAND_PIXEL_DOOM_TEXTURE_CACHE") &&
++        std::getenv("HYPRLAND_PIXEL_DOOM_BATCH_DRAW") && std::getenv("HYPRLAND_PIXEL_DOOM_NESTED_ONLY");
++    // Weak references avoid retaining GPU objects beyond live surface lifetimes.
++    // Cached textures are immutable: never reuse a 1x1 lastTexture for writes
++    // while this opt-in path is enabled, including transparent fallback commits.
++    static std::unordered_map<uint64_t, WP<Render::ITexture>> colors;
++    static uint64_t hits = 0, misses = 0;
+     auto [dataPtr, fmt, size] = buffer->beginDataPtr(0);
+     if (dataPtr) {
+         auto drmFmt = NFormatUtils::shmToDRM(fmt);
+         auto stride = bufferSize.y ? size / bufferSize.y : 0;
+-        if (lastTexture && lastTexture->m_isSynchronous && lastTexture->m_size == bufferSize) {
++        if (pixelCache && bufferSize == Vector2D{1,1} && size >= 4 &&
++            (fmt == WL_SHM_FORMAT_XRGB8888 || fmt == WL_SHM_FORMAT_ARGB8888)) {
++            uint32_t color; std::memcpy(&color, dataPtr, 4);
++            if (fmt == WL_SHM_FORMAT_XRGB8888 || (color >> 24) == 255) {
++                const uint64_t key = (uint64_t(fmt) << 32) | (color & 0xFFFFFF);
++                auto found = colors.find(key);
++                texture = found == colors.end() ? nullptr : found->second.lock();
++                if (texture) ++hits;
++                else {
++                    ++misses;
++                    texture = g_pHyprRenderer->createTexture(drmFmt, dataPtr, stride, bufferSize);
++                    if (colors.size() >= 4096) colors.clear();
++                    colors[key] = texture;
++                }
++                if ((hits + misses) == 1 || (hits + misses) % 65536 == 0)
++                    Log::logger->log(Log::WARN, "PD_TEXTURE_CACHE hits={} misses={} entries={}", hits, misses, colors.size());
++                // Match the regular update path's damage bookkeeping.
++                accumulateBufferDamage();
++                buffer->endDataPtr();
++                return;
++            }
++        }
++        if (lastTexture && lastTexture->m_isSynchronous && lastTexture->m_size == bufferSize &&
++            !(pixelCache && lastTexture->m_size == Vector2D{1,1})) {
+             texture = lastTexture;
+             texture->update(drmFmt, dataPtr, stride, accumulateBufferDamage());
+         } else

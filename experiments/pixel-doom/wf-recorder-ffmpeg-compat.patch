@@ -1,0 +1,35 @@
+diff --git i/src/frame-writer.cpp w/src/frame-writer.cpp
+index 34d16d6..8e0875c 100644
+--- i/src/frame-writer.cpp
++++ w/src/frame-writer.cpp
+@@ -191,22 +191,26 @@ AVPixelFormat FrameWriter::handle_buffersink_pix_fmt(const AVCodec *codec)
+ 
+     auto in_fmt = get_input_format();
+ 
++    const void *configs = nullptr;
++    if (avcodec_get_supported_config(nullptr, codec, AV_CODEC_CONFIG_PIX_FORMAT, 0, &configs, nullptr) < 0)
++        return in_fmt;
++    const auto *formats = static_cast<const AVPixelFormat *>(configs);
+     /* For codecs such as rawvideo no supported formats are listed */
+-    if (!codec->pix_fmts)
++    if (!formats)
+         return in_fmt;
+ 
+     /* If the codec supports getting the appropriate RGB format
+      * directly, we want to use it since we don't have to convert data */
+-    if (is_fmt_supported(in_fmt, codec->pix_fmts))
++    if (is_fmt_supported(in_fmt, formats))
+         return in_fmt;
+ 
+     /* Choose the format supported by the codec which best approximates the
+      * input fmt. */
+     AVPixelFormat best_format = AV_PIX_FMT_NONE;
+-    for (int i = 0; codec->pix_fmts[i] != AV_PIX_FMT_NONE; i++) {
++    for (int i = 0; formats[i] != AV_PIX_FMT_NONE; i++) {
+         int loss = 0;
+         best_format = av_find_best_pix_fmt_of_2(best_format,
+-            codec->pix_fmts[i], in_fmt, false, &loss);
++            formats[i], in_fmt, false, &loss);
+     }
+     return best_format;
+ }

@@ -1,2 +1,19 @@
 __pycache__/
 *.pyc
+
+# Local environments and generated artifacts
+.venv/
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+build/
+dist/
+*.log
+*.mp4
+*.mkv
+*.webm
+.DS_Store
+
+# Curated project promo; raw recordings stay ignored.
+!docs/media/omatari-promo.mp4

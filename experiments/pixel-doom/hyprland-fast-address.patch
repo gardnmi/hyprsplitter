@@ -1,0 +1,50 @@
+diff --git i/src/desktop/state/ViewQuery.cpp w/src/desktop/state/ViewQuery.cpp
+index aab1cd3..a1358fa 100644
+--- i/src/desktop/state/ViewQuery.cpp
++++ w/src/desktop/state/ViewQuery.cpp
+@@ -12,6 +12,8 @@
+ #include <hyprutils/string/String.hpp>
+ #include <re2/re2.h>
+ #include <utility>
++#include <charconv>
++#include <cstdlib>
+ 
+ using namespace Desktop;
+ using namespace Hyprutils::String;
+@@ -145,6 +147,18 @@ PHLWINDOW CViewQuery::bySelector() const {
+         matchCheck = regexp.substr(4);
+     }
+ 
++    // Private pixel-doom trial: preserve canonical address-selector semantics,
++    // but parse once instead of formatting every candidate window's address.
++    static const bool fastAddress = std::getenv("HYPRLAND_PIXEL_DOOM_FAST_ADDRESS") != nullptr;
++    uintptr_t address = 0;
++    if (fastAddress && mode == MODE_ADDRESS) {
++        if (!matchCheck.starts_with("0x") || matchCheck.size() <= 2)
++            return nullptr;
++        const auto [end, error] = std::from_chars(matchCheck.data() + 2, matchCheck.data() + matchCheck.size(), address, 16);
++        if (error != std::errc{} || end != matchCheck.data() + matchCheck.size() || matchCheck != std::format("0x{:x}", address))
++            return nullptr;
++    }
++
+     for (auto const& w : m_tracker.windows()) {
+         if (!w->m_isMapped)
+             continue;
+@@ -196,9 +210,14 @@ PHLWINDOW CViewQuery::bySelector() const {
+                 break;
+             }
+             case MODE_ADDRESS: {
+-                std::string addr = std::format("0x{:x}", rc<uintptr_t>(w.get()));
+-                if (matchCheck != addr)
+-                    continue;
++                if (fastAddress) {
++                    if (address != rc<uintptr_t>(w.get()))
++                        continue;
++                } else {
++                    std::string addr = std::format("0x{:x}", rc<uintptr_t>(w.get()));
++                    if (matchCheck != addr)
++                        continue;
++                }
+                 break;
+             }
+             case MODE_PID: {

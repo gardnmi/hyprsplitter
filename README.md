@@ -1,102 +1,144 @@
-# Hyprsplitter
+# Omatari · Hyprsplitter
 
-**Omarchy only.** A spaceship flight school for real Omarchy window shortcuts.
-This prototype is built and supported for Omarchy with Hyprland's Lua API
-(tested on Hyprland 0.56.2). Other desktops and standalone Hyprland setups
-are not supported.
-Each lesson is a separate small game with one objective and its own board.
-The windows really move, rotate, resize, float, fullscreen, and close.
+**Minigames played with real desktop windows, built for Omarchy.**
 
+Omatari is the cartridge console for this collection. Drag a floating cartridge
+into its slot, click to seat it, and play. Close the game to return to the console.
+The desktop is part of the game: windows become ramps, portals, platforms,
+enemies, and puzzle pieces.
 
-## Gameplay
+This is an early, Omarchy-only release. It uses Python, GTK, Cairo, and Hyprland's
+Lua IPC API, tested on Hyprland **0.56.2**. Standalone Hyprland, other compositors,
+and Windows/macOS are not supported.
 
-![Hyprsplitter gameplay: dodge asteroids, identify enemy ships, and unleash the secret weapon](docs/gameplay.gif)
+## Watch the promo
 
-## Install on Omarchy
+[![Omatari console and game cartridges](docs/media/omatari-promo.jpg)](https://github.com/gardnmi/hyprsplitter/raw/HEAD/docs/media/omatari-promo.mp4)
 
-Open a terminal in your Omarchy desktop and run:
+[Watch or download the 30-second promo](https://github.com/gardnmi/hyprsplitter/raw/HEAD/docs/media/omatari-promo.mp4)
+— all four games, in 1080p with an original retro soundtrack.
+
+## Setup
+
+From a terminal in an active Omarchy desktop session:
 
 ```sh
-omarchy pkg add git python python-gobject python-cairo gtk3
+omarchy pkg add git python python-gobject python-cairo gtk3 gtk4 gtk4-layer-shell ttfx
 git clone https://github.com/gardnmi/hyprsplitter.git
 cd hyprsplitter
-./play
+python tools/doctor.py
+./arcade
 ```
 
-The package command asks for your password if dependencies need installing.
-Run the game as your normal user. No Python virtual environment or pip install
-is needed; `play` uses Omarchy's system Python and GTK packages.
+Run as your normal user. No pip install or virtual environment is needed;
+`arcade` and `play` use system Python. Python **3.11+** is required.
+GTK4, gtk4-layer-shell, and ttfx are used by Road to OMACON; other cartridges use
+GTK3/Cairo. Road to OMACON's icon artwork also uses Omarchy's Symbols Nerd Font.
 
-To update an existing checkout:
+The dependency check is read-only. Games use their own workspaces and temporary,
+process-scoped window rules. They do not rewrite desktop configuration or global
+keybindings. Games pause simulation or rendering when their workspace is hidden.
 
-```sh
-cd hyprsplitter
-git pull --ff-only
-./play
-```
+## Games
 
-## Choose a lesson
-
-```sh
-./play
-./play --lesson lasers
-./play --lesson shoot
-./play --lesson float
-./play --lesson invasion
-```
-
-Press **Space** to start. Finish a lesson, then press Space for the next one.
-**R** retries the current lesson; **1–6** jumps to a lesson; **Escape** quits.
-Super means the Windows key. Your normal desktop bindings remain active.
-
-## Flight school
-
-| Phase | Game | Task |
+| Cartridge | What you do | Guide |
 | --- | --- | --- |
-| 1 | Asteroid field | Super+Shift+arrows moves the ship through all 24 tiles (6 × 4). Dodge 12 impacts. Overlapping bursts arrive every 1.2–2 seconds, with solo rocks and clusters of up to 6. Each rock gets a 2.6-second countdown; at most 10 sectors are threatened at once. |
-| 2 | Laser gates | Only 2 windows. Super+J rotates the split; Super+Shift+arrows swaps sides. Move to the marked safe half for 4 gates. |
-| 3 | Target practice | Super+arrows selects a red enemy. Super+W closes that actual window and destroys the ship. Close 10 red enemies in a 16-window formation; protect the 5 green friendlies and your cyan ship. |
-| 4 | Docking | Super+T undocks a compact ship. Hold Super and left-drag the entire window into the large green bay. When it says ALIGNED, Super+T docks. |
-| 5 | Cargo bay | Super+minus/equals changes width. Reach 120%, then restore 100%. |
-| 6 | Secret weapon | An invasion approaches. Fullscreen charges the weapon for 2.5 seconds; maximize releases a shockwave that destroys the fleet. |
+| Flight School | Learn real window shortcuts through six spaceship lessons | [Controls and lessons](docs/FLIGHT_SCHOOL.md) |
+| Chase the Sun | Charge a Quattro, adjust its ramp, and jump through three sunset windows | [Quattro](experiments/quattro-jump/README.md) |
+| Road to OMACON | Help Tux through redirected gunfire, a rotating chamber, a chair crash, and a plugin lift | [Tux puzzle](experiments/lemur-falls/README.md) |
+| Zero Day | Finish a fictional install, then defend against waves of satirical enemy windows | [Zero Day](experiments/omarchy-wars/README.md) |
 
-The game displays the next action needed, progress, and a completion screen.
-Friendlies have green borders, shield emblems, and DO NOT FIRE labels.
-Closing a friendly retries target practice with a FRIENDLY HIT explanation.
-Mistakes give feedback and another attempt. Closing the wrong tile restores the
-current exercise with an explanation. Selecting a window alone never destroys it.
-There is no auto-fire, health, energy, boss, or combined survival mode.
+In the console, drag a cartridge's contacts onto the slot, wait for alignment,
+then click it. **R** resets the console layout; **Escape** exits.
+In games, Escape exits and R retries/resets. See each guide for other controls.
+Native **Super+W** closes a game; Flight School's target-practice lesson uses it
+to destroy enemy windows, so close the player's cyan ship to exit that lesson.
 
-Fullscreen, maximize, float, split, and close hints are read from installed
-binding descriptions. On this development machine, **Super+Alt+F is fullscreen**
-and **Super+F is maximize**. Stock Omarchy uses the reverse assignment.
-In the invasion mission, press **Super+Alt+F to charge**, wait for CHARGED,
-then **Super+F to release** on this machine. The fleet, charge rings, and
-expanding shockwave animate across the ship window. Leaving fullscreen too
-early resets the charge. Native actions work even if their shortcuts are customized.
+Zero Day contains flashing combat effects; Road to OMACON contains cartoon
+blood effects. Chase the Sun is an interactive toy with visual surprises.
 
-## Requirements
+### Launch directly
 
-- Omarchy running Hyprland with the Lua dispatcher API (tested on 0.56.2)
-- Dwindle layout with `preserve_split` and `use_active_for_splits` enabled
-- Python 3, PyGObject, GTK 3, and Cairo
+```sh
+./play
+python experiments/quattro-jump/main.py
+python experiments/lemur-falls/main.py
+python experiments/omarchy-wars/main.py
+```
 
-A board opens on the first unused workspace starting at 90. Only a temporary
-rule matching this process's windows is installed. It is disabled on exit;
-no desktop configuration files or global keybindings are changed. Switching
-away pauses progress. Escape closes the board and restores the previous focus
-when exiting from the lesson workspace.
+Flight School additionally requires dwindle with `preserve_split` and
+`use_active_for_splits` enabled. The doctor reports these requirements separately.
+
+### Update
+
+Close the games, then:
+
+```sh
+git pull --ff-only
+python tools/doctor.py
+./arcade
+```
+
+## Make your own cartridge
+
+```sh
+python tools/new_game.py my-game --title "MY GAME"
+python games/my-game/main.py
+./arcade
+```
+
+The generated example is already a playable two-window docking game. Omatari
+discovers its JSON manifest automatically, supplies generic cartridge art, and
+lays out the extra cartridge. No launcher source edits are required.
+
+Start with [CONTRIBUTING.md](CONTRIBUTING.md), then read
+[Adding a game](docs/ADDING_A_GAME.md). Contributions of small mechanics, artwork,
+tests, bug fixes, and documentation are welcome.
 
 ## Development
 
 ```sh
-python -m unittest -v
-./play --smoke-test
+python tools/test.py
+python tools/test.py --labs
 ```
 
-Unit tests cover isolated lesson objectives, timing, retry behavior, and native
-geometry interpretation. The live smoke test exercises real swaps, split
-rotation, focus, enemy closes, docking, resizing, fullscreen charging, maximize release, and
-recovery after friendly fire.
+Tests run separately for each game to isolate same-named Python modules. CI runs
+these tests without launching desktop windows. Native interactions still need
+manual testing on Omarchy. See the [release checklist](docs/RELEASE.md).
 
-Previous combat prototypes remain available in Git tags through `v0.3.2`.
+### Repository map
+
+- `arcade`, `experiments/console/`: Omatari launcher, catalog, and cartridge art.
+- Root Python files: original Flight School.
+- `experiments/quattro-jump/`, `lemur-falls/`, `omarchy-wars/`: bundled games.
+- `experiments/theme.py`, `rally.py`, `surfaces.py`, `visuals.py`: shared drawing helpers.
+- `games/`: new community cartridges.
+- `templates/window-game/`: runnable starter.
+- `tools/`: dependency check, scaffold generator, isolated test runner.
+- Other experiments: development references, not supported cartridges.
+  `experiments/pixel-doom/` is a separate stress test requiring custom builds;
+  its generated output is ignored.
+
+## Troubleshooting
+
+Run `python tools/doctor.py` first. Use the system Python if `gi` or `cairo`
+cannot be imported. A live Omarchy session and the Lua IPC API are required;
+passing unit tests on another OS does not mean the games can run there.
+
+Launcher logs and per-cartridge output are in `~/.cache/hyprsplitter/`
+(or `$XDG_CACHE_HOME/hyprsplitter/`). Zero Day stores its best score under
+`~/.local/state/hyprsplitter/` (or `$XDG_STATE_HOME/hyprsplitter/`).
+
+For issues, include reproduction steps, game name, version information,
+monitor resolution/scale, and relevant logs. A short recording helps diagnose
+window-stacking or pointer-focus problems.
+
+## License and credits
+
+Project code is licensed under the [MIT License](LICENSE).
+See [asset provenance](docs/ASSETS.md) for artwork and redistribution status.
+Omatari is an independent project; referenced brands do not imply endorsement.
+
+### Flight School preview
+
+![Flight School gameplay](docs/gameplay.gif)

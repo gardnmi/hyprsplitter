@@ -1,0 +1,151 @@
+diff --git i/src/Compositor.cpp w/src/Compositor.cpp
+index 1d2d8b9..f4b33e2 100644
+--- i/src/Compositor.cpp
++++ w/src/Compositor.cpp
+@@ -318,6 +318,14 @@ void CCompositor::initServer(std::string socketName, int socketFd) {
+     option.backendRequestMode = Aquamarine::eBackendRequestMode::AQ_BACKEND_REQUEST_FALLBACK;
+     implementations.emplace_back(option);
+ 
++    // Private benchmark isolation: never attempt a DRM backend in this mode.
++    if (Env::envEnabled("HYPRLAND_PIXEL_DOOM_NESTED_ONLY")) {
++        implementations.clear();
++        option.backendType = Aquamarine::eBackendType::AQ_BACKEND_WAYLAND;
++        option.backendRequestMode = Aquamarine::eBackendRequestMode::AQ_BACKEND_REQUEST_MANDATORY;
++        implementations.emplace_back(option);
++    }
++
+     m_aqBackend = CBackend::create(implementations, options);
+ 
+     if (!m_aqBackend) {
+diff --git i/src/desktop/view/Window.cpp w/src/desktop/view/Window.cpp
+index 8836f73..c19bf62 100644
+--- i/src/desktop/view/Window.cpp
++++ w/src/desktop/view/Window.cpp
+@@ -1,6 +1,9 @@
+ #include <algorithm>
+ #include <array>
+ #include <cmath>
++#include <cstdlib>
++#include <utility>
++#include <vector>
+ #include <ranges>
+ #include <span>
+ #include <hyprutils/animation/AnimatedVariable.hpp>
+@@ -77,6 +80,74 @@ using enum NContentType::eContentType;
+ using namespace Desktop;
+ using namespace Desktop::View;
+ 
++// Private pixel-doom experiment. Never active without the explicit environment
++// switch, and restricted to non-X11 floating experiment windows.
++static bool pixelDoomBatchLifecycle(const CWindow& window) {
++    static const bool enabled = std::getenv("HYPRLAND_PIXEL_DOOM_BATCH_LIFECYCLE") != nullptr;
++    return enabled && !window.m_isX11 && window.m_isFloating && window.m_class.starts_with("pixel-doom-");
++}
++
++static void pixelDoomQueueWorkspaceRefresh(const PHLWORKSPACE& workspace, bool unmap) {
++    struct PendingWorkspace {
++        PHLWORKSPACEREF workspace;
++        bool updateData;
++    };
++    static std::vector<PendingWorkspace> pending;
++    static bool scheduled = false;
++    static bool decorations = false;
++    static size_t requests = 0;
++    ++requests;
++    decorations |= unmap;
++    if (workspace) {
++        auto it = std::ranges::find_if(pending, [&](const auto& item) { return item.workspace.lock() == workspace; });
++        if (it == pending.end())
++            pending.push_back({workspace, unmap});
++        else
++            it->updateData |= unmap;
++    }
++    if (scheduled)
++        return;
++    scheduled = true;
++    static auto flush = [] {
++        // Detach the batch first, so reentrant changes schedule another pass.
++        auto work = std::move(pending);
++        pending.clear();
++        const bool updateDecorations = std::exchange(decorations, false);
++        const auto requestCount = std::exchange(requests, 0);
++        scheduled = false;
++        size_t workspaces = 0;
++        for (const auto& item : work) {
++            if (auto ws = item.workspace.lock()) {
++                ws->updateWindows();
++                if (item.updateData) {
++                    ws->updateWindowData();
++                    ws->forceReportSizesToWindows();
++                }
++                ++workspaces;
++            }
++        }
++        if (updateDecorations)
++            Desktop::globalWindowController()->updateAllWindowsDecorations();
++        Log::logger->log(Log::INFO, "pixel-doom lifecycle: {} requests, {} workspace passes, decorations={}", requestCount, workspaces, updateDecorations);
++    };
++    // A fixed deadline (not a sliding debounce) also combines closes that arrive
++    // in separate event-loop cycles. Zero retains the initial idle-only trial.
++    static const int delayMs = [] {
++        const auto value = std::getenv("HYPRLAND_PIXEL_DOOM_BATCH_MS");
++        return value ? std::clamp(std::atoi(value), 0, 16) : 8;
++    }();
++    if (!delayMs) {
++        g_pEventLoopManager->doLater(flush);
++        return;
++    }
++    static SP<CEventLoopTimer> timer;
++    if (!timer) {
++        timer = makeShared<CEventLoopTimer>(std::nullopt, [](SP<CEventLoopTimer>, void*) { flush(); }, nullptr);
++        g_pEventLoopManager->addTimer(timer);
++    }
++    timer->updateTimeout(std::chrono::milliseconds(delayMs));
++}
++
+ // I wish I had an elven wife instead of a windowIDCounter
+ static uint64_t            windowIDCounter = 0x18000000;
+ 
+@@ -740,13 +811,16 @@ void CWindow::onUnmap() {
+ 
+     resetMotionBlur();
+ 
+-    if (m_workspace) {
+-        m_workspace->updateWindows();
+-        m_workspace->updateWindowData();
++    if (pixelDoomBatchLifecycle(*this))
++        pixelDoomQueueWorkspaceRefresh(m_workspace, true);
++    else {
++        if (m_workspace) {
++            m_workspace->updateWindows();
++            m_workspace->updateWindowData();
++        }
++        Desktop::globalWindowController()->updateAllWindowsDecorations();
+     }
+ 
+-    Desktop::globalWindowController()->updateAllWindowsDecorations();
+-
+     m_workspace.reset();
+ 
+     if (m_isX11)
+@@ -2543,7 +2617,9 @@ void CWindow::mapWindow() {
+     // fix some xwayland apps that don't behave nicely
+     m_reportedSize = m_pendingReportedSize;
+ 
+-    if (m_workspace)
++    if (pixelDoomBatchLifecycle(*this))
++        pixelDoomQueueWorkspaceRefresh(m_workspace, false);
++    else if (m_workspace)
+         m_workspace->updateWindows();
+ 
+     if (PMONITOR && isX11OverrideRedirect()) {
+@@ -2704,7 +2780,8 @@ void CWindow::unmapWindow() {
+     g_pInputManager->recheckIdleInhibitorStatus();
+ 
+     // force report all sizes (QT sometimes has an issue with this)
+-    if (m_workspace)
++    // The opt-in batch in onUnmap reports remaining window sizes once.
++    if (m_workspace && !pixelDoomBatchLifecycle(*this))
+         m_workspace->forceReportSizesToWindows();
+ 
+     // update lastwindow after focus

@@ -173,7 +173,10 @@ def main():
             return True
 
         def delete(self, actor):
-            if self.closing or not self.ready:
+            if self.closing:
+                return True
+            if not self.ready or self.game.close_exits(actor):
+                self.close()
                 return True
             if self.game.close_target(actor):
                 # This is a real Wayland close request. Destroy only the target;
@@ -184,8 +187,7 @@ def main():
                 self.game.geometry.pop(actor, None)
                 print(f'TARGET CLOSED actor={actor} remaining={len(self.game.enemies)}', flush=True)
                 return True
-            # An accidental close is a recoverable teaching moment. Re-create the
-            # exercise rather than mapping the close shortcut to a different action.
+            # Closing a friendly during active target practice retries that lesson.
             self.windows.pop(actor).destroy()
             self.addresses.pop(actor, None)
             self.ready = False
