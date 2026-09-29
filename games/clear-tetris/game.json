@@ -1,0 +1,7 @@
+{
+  "id": "clear-tetris",
+  "title": "CLEAR TETRIS",
+  "subtitle": "FALLING BLOCKS / KEEP THE MEETING IN VIEW",
+  "accent": "cyan",
+  "entry": "main.py"
+}

@@ -17,7 +17,7 @@ available on this machine).
 - **R** relights the fire. **Esc** or closing either window closes both.
 
 Rules are temporary and scoped to this process's window titles. No installed
-configuration files are modified. The DOOM experiment is not involved.
+configuration files are modified.
 
 This POC draws rain inside the two windows; rain through the desktop gap would
 require an additional transparent overlay. Other windows do not block the rain.

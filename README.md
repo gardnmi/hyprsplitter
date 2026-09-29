@@ -111,8 +111,6 @@ manual testing on Omarchy. See the [release checklist](docs/RELEASE.md).
 - `templates/window-game/`: runnable starter.
 - `tools/`: dependency check, scaffold generator, isolated test runner.
 - Other experiments: development references, not supported cartridges.
-  `experiments/pixel-doom/` is a separate stress test requiring custom builds;
-  its generated output is ignored.
 
 ## Troubleshooting
 

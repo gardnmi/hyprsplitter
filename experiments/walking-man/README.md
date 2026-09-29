@@ -27,7 +27,7 @@ it returns to the workspace you launched from.
 Hyprland owns the layout and performs swaps through the existing Omarchy
 shortcuts. No shortcuts are rebound and no installed configuration is edited.
 The process installs one temporary window rule and removes it on exit.
-This experiment is independent of rain/fire and DOOM.
+This experiment is independent of rain/fire.
 
 Optional `--state-file /tmp/walking-man-tiled-state.json` exposes gameplay and
 actual compositor geometry. Rendering runs at 30 FPS; geometry is polled at

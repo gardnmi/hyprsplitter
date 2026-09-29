@@ -84,7 +84,6 @@ Use the PR template. A small playable mechanic is easier to review than a new
 engine abstraction with no game using it.
 
 Do not commit recordings, local caches, benchmark output, or generated binaries.
-The large Pixel DOOM experiment is outside the supported cartridge/test workflow.
 
 ## Reporting issues
 
