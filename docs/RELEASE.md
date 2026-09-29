@@ -28,9 +28,8 @@ Supported collection: Omatari console, Flight School, Chase the Sun, Road to
 OMACON, and Zero Day. New community games use `games/*/game.json`.
 
 Rain/fire, walking-man, window-lab, and platform-lab are development references.
-Pixel DOOM is a separate stress experiment with locally built compositors,
-terminals, recording tools, and external DOOM data. It is not a playable
-cartridge, not run by standard CI, and not a supported installation path.
+The retired Pixel DOOM stress experiment is available in Git history through
+commit `99d5d5e`; it is no longer included in release source archives.
 
 ## Release contents and state
 
